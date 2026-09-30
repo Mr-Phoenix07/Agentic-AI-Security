@@ -117,7 +117,87 @@ class APISecurityAgent(BaseAgent):
                 self._mcp(state, t, surface)
             elif t.kind in _WEB_KINDS:
                 self._web(state, t, surface)
+                self._from_live_scan(state, t)
+                self._from_external_tools(state, t)
         return state
+
+    def _from_live_scan(self, state, t):
+        """Raise candidate findings from the built-in live crawler's results."""
+        live = state.recon.get(t.id, {}).get("live")
+        if not live or not live.get("reachable"):
+            return
+        base = live.get("base_url", t.id)
+        for path in live.get("exposed_sensitive", []):
+            state.candidates.append(self._finding(
+                t, f"Exposed sensitive resource: {path}",
+                FindingCategory.DATA_EXPOSURE, Severity.HIGH,
+                f"{base}{path} is reachable (HTTP 200) without authentication.",
+                "Source/config/secret exposure enables credential theft and "
+                "further compromise.", 0.85, rationale="live HTTP probe"))
+        for path in live.get("directory_listings", []):
+            state.candidates.append(self._finding(
+                t, f"Directory listing enabled: {path}",
+                FindingCategory.API_SECURITY, Severity.MEDIUM,
+                f"{base}{path} returns an auto-generated directory index.",
+                "Directory listing discloses file structure and hidden assets.",
+                0.8, rationale="live HTTP probe"))
+        missing = live.get("missing_security_headers", [])
+        if missing:
+            state.candidates.append(self._finding(
+                t, "Missing HTTP security headers",
+                FindingCategory.API_SECURITY, Severity.LOW,
+                f"{base} response is missing: {', '.join(missing)}.",
+                "Absent hardening headers increase clickjacking/MIME/XSS exposure.",
+                0.9, rationale="live HTTP probe"))
+
+    def _from_external_tools(self, state, t):
+        """Raise candidate findings from external-tool observations.
+
+        Handles signature scans (nuclei), server scans (nikto), DAST (ZAP), and
+        injection confirmation (sqlmap/ghauri). Discovery-only tools (katana,
+        gobuster, ffuf, feroxbuster, arjun) feed recon, not findings, here.
+        """
+        _SEV = {"critical": Severity.CRITICAL, "high": Severity.HIGH,
+                "medium": Severity.MEDIUM, "low": Severity.LOW, "info": Severity.INFO}
+        for run in state.recon.get(t.id, {}).get("tool_observations", []):
+            tool = run.get("tool", "")
+            for obs in run.get("observations", []):
+                kind = obs.get("kind")
+                sevhint = str(obs.get("severity_hint") or "info").lower()
+                value = obs.get("value", "")
+                if kind == "template_match":                       # nuclei
+                    detail = obs.get("detail") if isinstance(obs.get("detail"), dict) else {}
+                    info = detail.get("info", {}) if isinstance(detail, dict) else {}
+                    sev = str(sevhint or info.get("severity") or "info").lower()
+                    name = info.get("name") or value or "signature match"
+                    self._add(state, t, f"Active signature match: {name}",
+                              FindingCategory.API_SECURITY, _SEV.get(sev, Severity.INFO),
+                              f"nuclei matched '{name}' at {value}.",
+                              "Confirmed by an active signature scan of the live surface.",
+                              0.75, "active signature scan (nuclei)")
+                elif kind == "sql_injection":                      # sqlmap / ghauri
+                    self._add(state, t, f"SQL injection confirmed ({tool})",
+                              FindingCategory.INPUT_VALIDATION, Severity.CRITICAL,
+                              f"{tool} confirmed an injectable parameter on the target.",
+                              "SQL injection permits unauthorized data access/modification "
+                              "(OWASP A03: Injection).",
+                              0.9, f"active injection confirmation ({tool})")
+                elif kind == "nikto_finding":                      # nikto
+                    self._add(state, t, f"Server issue (nikto): {value[:80]}",
+                              FindingCategory.API_SECURITY, _SEV.get(sevhint, Severity.LOW),
+                              f"nikto reported: {value}",
+                              "Web-server misconfiguration or dangerous-file exposure.",
+                              0.6, "nikto server scan")
+                elif kind == "zap_alert":                          # OWASP ZAP
+                    self._add(state, t, f"ZAP alert: {value[:80]}",
+                              FindingCategory.API_SECURITY, _SEV.get(sevhint, Severity.LOW),
+                              f"OWASP ZAP flagged: {value}",
+                              "DAST alert from an OWASP ZAP baseline scan.",
+                              0.65, "OWASP ZAP baseline")
+
+    def _add(self, state, t, title, cat, sev, root, impact, conf, rationale):
+        state.candidates.append(
+            self._finding(t, title, cat, sev, root, impact, conf, rationale=rationale))
 
     def _web(self, state, t, surface):
         for ep in surface.get("ai_endpoints", []):
@@ -162,11 +242,12 @@ class APISecurityAgent(BaseAgent):
                 "Excessive agency: prompt-influenced tool calls can take irreversible "
                 "actions unattended.", 0.88))
 
-    def _finding(self, t, title, category, severity, root, impact, conf) -> Finding:
+    def _finding(self, t, title, category, severity, root, impact, conf,
+                 rationale: str = "declared-surface analysis") -> Finding:
         return Finding(
             title=title, category=category, severity=severity,
             mode=EvaluationMode.GREY_BOX,
-            confidence=Confidence(conf, "declared-surface analysis", 1),
+            confidence=Confidence(conf, rationale, 1),
             target_id=t.id, summary=root, root_cause=root, impact=impact)
 
 

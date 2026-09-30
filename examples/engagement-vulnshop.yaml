@@ -1,0 +1,66 @@
+# AEGIS engagement — FULL external toolchain + exploitation against a self-owned
+# local test target (VulnShop on http://127.0.0.1:3000). Same config shape as
+# examples/engagement-fulltools-exploit.yaml; only the injection endpoints differ.
+#
+# Reproduce end-to-end:
+#   1. python examples/vulnshop_target.py 3000        # start the vulnerable app
+#   2. aegis run examples/engagement-vulnshop.yaml    # full scan + exploitation
+# VulnShop is deliberately vulnerable (SQLi, exposed .env/.git, dir listing,
+# missing headers) and is threaded so it survives a full concurrent scan.
+
+engagement: "vulnshop-fulltoolchain-exploit"
+workdir: "./aegis_runs"
+log_level: "INFO"
+
+authorization:
+  dry_run: false
+  rules:
+    - label: "localhost-vulnshop"
+      hosts: ["127.0.0.1", "localhost", "::1"]
+      url_globs:
+        - "http://127.0.0.1:3000/*"
+        - "http://localhost:3000/*"
+      authorization_ref: "self-owned local test target"
+      max_requests: 5000000
+
+scan:
+  enabled: true
+  active: true
+  offline: true
+  max_pages: 300
+  timeout_s: 6
+  tool_timeout_s: 300
+
+  external_tools: true
+  tools: ["nmap", "httpx", "katana", "gobuster", "ffuf", "feroxbuster",
+          "arjun", "nuclei", "nikto", "zap", "sqlmap", "ghauri"]
+  execute_tools: true
+  auto_approve_active: true
+
+  exploitation: true
+  credential_testing: false
+  max_risk: "dangerous"
+
+  recursive: true
+  crawl_depth: 2
+  rate_limit: 150
+  scan_threads: 10
+  max_discovered: 500
+  wordlist: null
+
+  nmap_ports: "top-1000"
+
+  sqli_level: 3
+  sqli_risk: 2
+  sqli_dbms: "sqlite"
+  injection_targets:
+    - url: "http://127.0.0.1:3000/search?q=test"
+    - url: "http://127.0.0.1:3000/login"
+      data: '{"email":"test@vuln.local","password":"x"}'
+
+targets:
+  - id: "vulnshop"
+    kind: "rest_api"
+    provider: "mock"
+    endpoint: "http://127.0.0.1:3000"
+    mode: "black_box"

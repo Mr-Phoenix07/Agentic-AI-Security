@@ -48,6 +48,82 @@ class LoopConfig:
 
 
 @dataclass
+class ScanConfig:
+    """Live web-target scanning — how `aegis run` actually contacts a web app.
+
+    Fail-closed and opt-in. With ``enabled=False`` (default) nothing reaches the
+    network and the web pipeline stays a declared-inventory review, so existing
+    behaviour and tests are unchanged. When enabled, the WebRecon agent runs the
+    built-in, scope-gated :class:`~aegis.targets.livehttp.LiveHttpProbe` against
+    each authorized web target, and — if ``external_tools`` is on and the
+    binaries are installed — also the scope-gated ToolExecutor (httpx/nuclei).
+
+    * ``active``            include light-active checks (common/sensitive paths,
+                            directory listing) on top of passive header review.
+    * ``external_tools``    additionally drive httpx/nuclei via the ToolExecutor.
+    * ``execute_tools``     False => tools run dry (argv validated, not executed).
+    """
+
+    enabled: bool = False
+    active: bool = True                    # passive-only when False
+    offline: bool = True                   # only contact local hosts
+    max_pages: int = 40
+    timeout_s: float = 5.0
+    crawl_paths: list[str] = field(default_factory=list)   # extra paths to probe
+    # optional external-tool layer
+    external_tools: bool = False
+    tools: list[str] = field(default_factory=lambda: ["httpx", "nuclei"])
+    execute_tools: bool = True             # False => dry-run the tools
+    auto_approve_active: bool = True       # approve ACTIVE tools (nuclei) unattended
+    credential_testing: bool = False
+    exploitation: bool = False
+    max_risk: str = "active"
+    # recursive discovery (katana / gobuster / ffuf)
+    recursive: bool = True                 # re-probe tool-discovered endpoints
+    crawl_depth: int = 3                   # katana max crawl depth
+    katana_crawl_seconds: int = 90         # katana total crawl-duration ceiling
+    rate_limit: int | None = None          # katana requests/sec (politeness)
+    scan_threads: int = 10                 # concurrency cap for brute-forcers
+                                           # (politeness; avoids crashing single-
+                                           # threaded targets)
+    wordlist: str | None = None            # gobuster/ffuf wordlist; auto-detect if None
+    max_discovered: int = 500              # cap on discovered endpoints kept
+    # per-tool wall-clock ceiling (seconds); keeps a live run bounded
+    tool_timeout_s: int = 300
+    # network scan (nmap) — bare-host service/version detection
+    nmap_ports: str = "top-1000"           # "top-1000" | comma/range port spec
+    # exploitation confirmation (sqlmap / ghauri) — only used when exploitation=true
+    #   Each entry targets a specific injectable endpoint, e.g.:
+    #     - {url: "http://127.0.0.1:3000/rest/products/search?q=x", data: null}
+    #     - {url: "http://127.0.0.1:3000/rest/user/login",
+    #        data: '{"email":"a@a.a*","password":"x"}'}
+    #   Empty => sqlmap self-discovers via --forms + shallow --crawl on the base URL.
+    injection_targets: list[dict] = field(default_factory=list)
+    sqli_level: int = 1                    # sqlmap 1-5 / ghauri 1-3
+    sqli_risk: int = 1                     # sqlmap 1-3
+    sqli_dbms: str | None = None           # optional back-end DBMS hint (speeds detection)
+
+    def wordlist_candidates(self) -> tuple[str, ...]:
+        return (
+            "/usr/share/seclists/Discovery/Web-Content/common.txt",
+            "/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt",
+            "/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt",
+            "/usr/share/wordlists/dirb/common.txt",
+            "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
+            os.path.expanduser("~/.local/share/wordlists/common.txt"),
+        )
+
+    def resolve_wordlist(self) -> str | None:
+        """Return an explicit wordlist, else auto-detect a common SecLists path."""
+        if self.wordlist and os.path.isfile(self.wordlist):
+            return self.wordlist
+        for cand in self.wordlist_candidates():
+            if os.path.isfile(cand):
+                return cand
+        return None
+
+
+@dataclass
 class Config:
     engagement: str = "unnamed-engagement"
     workdir: Path = field(default_factory=lambda: Path("./aegis_runs"))
@@ -55,6 +131,7 @@ class Config:
     scope: AuthorizationScope = field(default_factory=AuthorizationScope)
     targets: list[TargetConfig] = field(default_factory=list)
     loop: LoopConfig = field(default_factory=LoopConfig)
+    scan: ScanConfig = field(default_factory=ScanConfig)
     log_level: str = "INFO"
     raw: dict = field(default_factory=dict)
 
@@ -68,6 +145,7 @@ class Config:
     @classmethod
     def from_dict(cls, data: dict) -> Config:
         loop = LoopConfig(**(data.get("loop") or {}))
+        scan = ScanConfig(**(data.get("scan") or {}))
         scope = AuthorizationScope.from_dict(data.get("authorization") or {})
         targets = [TargetConfig(**t) for t in (data.get("targets") or [])]
         return cls(
@@ -77,6 +155,7 @@ class Config:
             scope=scope,
             targets=targets,
             loop=loop,
+            scan=scan,
             log_level=data.get("log_level", "INFO"),
             raw=data,
         )
@@ -106,6 +185,7 @@ class Config:
             "authorization": self.scope.summary(),
             "targets": [t.__dict__ for t in self.targets],
             "loop": self.loop.__dict__,
+            "scan": self.scan.__dict__,
             "log_level": self.log_level,
         }
 

@@ -15,4 +15,12 @@ aegis_runs/
 *.db-shm
 .venv/
 venv/
+agentic/
 .DS_Store
+# external security-tool cache/config/output dirs created at runtime
+.nuclei-cache/
+.nuclei-config/
+nuclei/
+katana/
+httpx/
+.uncover-config/

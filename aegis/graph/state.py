@@ -11,6 +11,7 @@ tracer) so agents don't reach for globals.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from ..core.config import Config
 from ..core.events import MessageBus
@@ -21,6 +22,10 @@ from ..observability.logging import BoundLogger
 from ..observability.tracing import Tracer
 from ..storage.db import Database
 from ..targets.base import Target
+
+if TYPE_CHECKING:  # optional; only built when scan.external_tools is enabled
+    from ..tools.execution import ToolExecutor
+    from ..tools.registry import ToolRegistry
 
 
 @dataclass
@@ -33,6 +38,10 @@ class AssessmentState:
     tracer: Tracer
     memory: dict[str, Memory] = field(default_factory=dict)   # per target_key
     targets: list[Target] = field(default_factory=list)
+
+    # optional external-tool layer (None unless scan.external_tools is enabled)
+    tool_executor: ToolExecutor | None = None
+    tool_registry: ToolRegistry | None = None
 
     # planning
     seeds: list = field(default_factory=list)

@@ -18,7 +18,7 @@ from aegis.tools import (
     ToolRegistry,
 )
 from aegis.tools.registry import TargetProfile
-from aegis.tools.spec import build_argv_safe
+from aegis.tools.spec import RiskLevel, ToolCategory, build_argv_safe
 
 
 @pytest.fixture
@@ -46,11 +46,22 @@ def test_catalog_populated_and_unique(registry):
 
 
 def test_documentation_only_tools_are_not_executable(registry):
-    for name in ("sqlmap", "metasploit", "hydra"):
+    # metasploit/hydra remain pure documentation-only contracts.
+    for name in ("metasploit", "hydra"):
         spec = registry.get(name)
         assert spec is not None
         assert not spec.executable, f"{name} must be documentation-only"
         assert spec.command_builder is None
+
+
+def test_gated_exploitation_tools_are_executable_but_dangerous(registry):
+    # sqlmap/ghauri ship scoped adapters, but stay DANGEROUS/EXPLOITATION so the
+    # executor refuses them unless exploitation is explicitly enabled.
+    for name in ("sqlmap", "ghauri"):
+        spec = registry.get(name)
+        assert spec is not None and spec.executable
+        assert spec.risk_level == RiskLevel.DANGEROUS
+        assert spec.category == ToolCategory.EXPLOITATION
 
 
 def test_register_rejects_duplicate(registry):
@@ -153,13 +164,28 @@ def test_active_tool_requires_approval(registry, web_scope):
 
 
 def test_documentation_only_tool_never_runs(registry, web_scope):
+    # a pure doc-only tool is refused even with every switch flipped on.
     ex = ToolExecutor(web_scope, dry_run=True, exploitation=True,
-                      approval=lambda i, s, d: True)
-    spec = registry.get("sqlmap")
-    inv = ToolInvocation(tool="sqlmap", target="https://authorized.example")
+                      credential_testing=True, approval=lambda i, s, d: True)
+    spec = registry.get("metasploit")
+    inv = ToolInvocation(tool="metasploit", target="https://authorized.example")
     res = ex.run(inv, spec)
     assert not res.ok
     assert "documentation-only" in (res.refused_reason or "")
+
+
+def test_exploitation_tool_gated_by_engagement_switch(registry, web_scope):
+    spec = registry.get("sqlmap")
+    inv = ToolInvocation(tool="sqlmap", target="https://authorized.example")
+    # fail-closed: refused without exploitation enabled, even with approval.
+    ex = ToolExecutor(web_scope, dry_run=True, approval=lambda i, s, d: True)
+    res = ex.run(inv, spec)
+    assert not res.ok and "exploitation" in (res.refused_reason or "")
+    # with exploitation enabled + approval, the dry-run validates (nothing executed).
+    ex2 = ToolExecutor(web_scope, dry_run=True, exploitation=True,
+                       approval=lambda i, s, d: True)
+    res2 = ex2.run(inv, spec)
+    assert res2.ok and res2.dry_run and res2.argv[0] == "sqlmap"
 
 
 def test_offline_blocks_network_tool_against_remote(registry):

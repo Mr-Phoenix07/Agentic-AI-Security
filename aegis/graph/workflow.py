@@ -64,11 +64,44 @@ def build_state(config: Config, *, bus: MessageBus | None = None,
                       t.metadata.get("model"), t.metadata.get("endpoint"),
                       {k: v for k, v in t.metadata.items() if k not in ("model", "endpoint")})
 
+    tool_executor, tool_registry = _build_tooling(config, bus)
+
     state = AssessmentState(config=config, assessment_id=aid, db=db, bus=bus,
-                            logger=blog, tracer=tracer, targets=targets)
+                            logger=blog, tracer=tracer, targets=targets,
+                            tool_executor=tool_executor, tool_registry=tool_registry)
     blog.info("assessment.start", "assessment initialised",
               targets=len(targets), engagement=config.engagement)
     return state
+
+
+def _build_tooling(config: Config, bus: MessageBus):
+    """Construct the scope-gated ToolExecutor + registry, or (None, None).
+
+    Only built when live scanning *and* the external-tool layer are enabled.
+    The executor shares the engagement's fail-closed authorization scope, so an
+    out-of-scope target is refused before any process is created.
+    """
+    scan = config.scan
+    if not (scan.enabled and scan.external_tools):
+        return None, None
+
+    from ..tools import ToolRegistry
+    from ..tools.execution import ToolExecutor, deny_all_approvals
+
+    def _approve_active(inv, spec, decision) -> bool:
+        return True  # explicit engagement opt-in for ACTIVE+ tools
+
+    approval = _approve_active if scan.auto_approve_active else deny_all_approvals
+    executor = ToolExecutor(
+        scope=config.scope,
+        bus=bus,
+        offline=scan.offline,
+        dry_run=not scan.execute_tools,
+        approval=approval,
+        credential_testing=scan.credential_testing,
+        exploitation=scan.exploitation,
+    )
+    return executor, ToolRegistry()
 
 
 class Orchestrator:
