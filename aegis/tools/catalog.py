@@ -184,16 +184,30 @@ def _build_arjun(inv: ToolInvocation) -> list[str]:
     return argv
 
 
-def _build_zap(inv: ToolInvocation) -> list[str]:
-    # OWASP ZAP baseline: spider + passive rules. Results printed to stdout as
-    # WARN-*/FAIL-* lines. -I = do not return failure exit on warnings.
-    argv = ["zap-baseline.py", "-t", inv.target, "-I"]
+def _zap_argv(binary: str, inv: ToolInvocation) -> list[str]:
+    # Shared ZAP argv. Results print to stdout as WARN-*/FAIL-* lines; -I = do
+    # not return a failure exit on warnings. The headless wrapper on PATH drives
+    # a user-space ZAP daemon via its API and emits those lines.
+    argv = [binary, "-t", inv.target, "-I"]
     if inv.opt("ajax"):
         argv += ["-j"]                        # ajax spider for SPAs
     mins = inv.opt("spider_minutes")
     if mins is not None:
         argv += ["-m", str(int(mins))]
+    budget = inv.opt("budget_minutes")        # overall wall-clock budget (minutes)
+    if budget is not None:
+        argv += ["-T", str(int(budget))]
     return argv
+
+
+def _build_zap(inv: ToolInvocation) -> list[str]:
+    # ZAP baseline: spider (+optional AJAX spider) + passive rules only.
+    return _zap_argv("zap-baseline.py", inv)
+
+
+def _build_zap_full(inv: ToolInvocation) -> list[str]:
+    # ZAP full scan: baseline PLUS the active scanner (injection/XSS/etc.).
+    return _zap_argv("zap-full-scan.py", inv)
 
 
 # --- gated exploitation adapters (DANGEROUS; require exploitation=true + approval) --- #
@@ -632,6 +646,22 @@ def default_catalog() -> list[ToolSpec]:
                           "spider_minutes": "spider time budget"},
             command_builder=_build_zap, parser=_parse_zap,
             references=("https://www.zaproxy.org/docs/docker/baseline-scan/",),
+        ),
+        ToolSpec(
+            name="zap-full", binary="zap-full-scan.py", category=ToolCategory.WEB_SCAN,
+            purpose="OWASP ZAP full DAST scan: spider + AJAX spider + ACTIVE scan "
+                    "(injection/XSS/etc.). Much deeper than baseline.",
+            # INTRUSIVE: the active scanner sends attack payloads, so it needs the
+            # engagement to allow INTRUSIVE+ risk (max_risk) and human approval.
+            risk_level=RiskLevel.INTRUSIVE, supported_targets=_WEB,
+            applies_when=("http", "https", "web", "api"), evidence_format="text",
+            default_timeout_s=2400,
+            input_schema={"target": "URL", "ajax": "use ajax spider for SPAs (bool)",
+                          "spider_minutes": "spider time budget"},
+            command_builder=_build_zap_full, parser=_parse_zap,
+            notes="Active DAST. Honours the ZAP_SCAN_BUDGET env (overall wall-clock) "
+                  "so it finishes within the per-tool timeout and shuts ZAP down.",
+            references=("https://www.zaproxy.org/docs/docker/full-scan/",),
         ),
         # -- static analysis (local, no network) ---------------------------- #
         ToolSpec(

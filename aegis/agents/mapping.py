@@ -296,7 +296,14 @@ class WebReconAgent(BaseAgent):
             # cap nikto's runtime so it reports within the per-tool budget
             return [(target_url, {"maxtime": max(60, sc.tool_timeout_s - 30)})]
         if name == "zap":
-            return [(target_url, {"ajax": True})]        # SPA-aware spider
+            # baseline (spider + passive); the wrapper self-limits to ~8 min and
+            # we give the executor an 12-min kill-timeout buffer beyond that.
+            return [(target_url, {"ajax": True, "budget_minutes": 8,
+                                  "timeout_s": 720})]
+        if name == "zap-full":
+            # full active DAST; self-limit ~35 min, executor kill-timeout ~39 min.
+            return [(target_url, {"ajax": True, "budget_minutes": 35,
+                                  "timeout_s": 2340})]
         if name in ("sqlmap", "ghauri"):
             base = {"level": sc.sqli_level, "risk": sc.sqli_risk}
             if sc.sqli_dbms:

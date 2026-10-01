@@ -189,11 +189,15 @@ class APISecurityAgent(BaseAgent):
                               "Web-server misconfiguration or dangerous-file exposure.",
                               0.6, "nikto server scan")
                 elif kind == "zap_alert":                          # OWASP ZAP
+                    active = tool == "zap-full"                    # active scan
                     self._add(state, t, f"ZAP alert: {value[:80]}",
                               FindingCategory.API_SECURITY, _SEV.get(sevhint, Severity.LOW),
                               f"OWASP ZAP flagged: {value}",
-                              "DAST alert from an OWASP ZAP baseline scan.",
-                              0.65, "OWASP ZAP baseline")
+                              "DAST alert from an OWASP ZAP "
+                              + ("active scan (payloads sent)." if active
+                                 else "baseline (spider + passive) scan."),
+                              0.8 if active else 0.65,
+                              "OWASP ZAP active scan" if active else "OWASP ZAP baseline")
 
     def _add(self, state, t, title, cat, sev, root, impact, conf, rationale):
         state.candidates.append(

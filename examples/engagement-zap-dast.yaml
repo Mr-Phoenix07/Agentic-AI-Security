@@ -1,0 +1,43 @@
+# ZAP-focused, target-friendly DAST engagement for a fragile single-process
+# target (e.g. OWASP Juice Shop). Runs only httpx + ZAP baseline + ZAP active
+# scan, so no other tool pre-degrades the server. The ZAP active scan is paced
+# (see scripts/zap_scan.py) to avoid OOM-crashing a target with no rate limiting.
+#
+# Setup + run:
+#   1. pip/one-time: ZAP installed at ~/.local/opt/zap; wrappers on PATH
+#      (cp scripts/zap_scan.py ~/.local/bin/zap-baseline.py and .../zap-full-scan.py)
+#   2. (recommended) restart Juice Shop with more heap, e.g.
+#        docker run --rm -p 3000:3000 -e NODE_OPTIONS=--max-old-space-size=8192 bkimminich/juice-shop
+#   3. export ZAP_SEED_URLS="http://127.0.0.1:3000/rest/products/search?q=test,..."
+#   4. aegis run examples/engagement-zap-dast.yaml
+engagement: "juiceshop-zap-dast"
+workdir: "./aegis_runs"
+log_level: "INFO"
+authorization:
+  dry_run: false
+  rules:
+    - label: "localhost-juiceshop"
+      hosts: ["127.0.0.1", "localhost", "::1"]
+      url_globs: ["http://127.0.0.1:3000/*", "http://localhost:3000/*"]
+      authorization_ref: "self-owned local OWASP Juice Shop"
+      max_requests: 5000000
+scan:
+  enabled: true
+  active: true
+  offline: true
+  max_pages: 100
+  timeout_s: 6
+  tool_timeout_s: 300
+  external_tools: true
+  tools: ["httpx", "zap", "zap-full"]
+  execute_tools: true
+  auto_approve_active: true
+  exploitation: false
+  credential_testing: false
+  max_risk: "intrusive"
+targets:
+  - id: "juiceshop"
+    kind: "rest_api"
+    provider: "mock"
+    endpoint: "http://127.0.0.1:3000"
+    mode: "black_box"
