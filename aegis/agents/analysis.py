@@ -159,6 +159,45 @@ class APISecurityAgent(BaseAgent):
         """
         _SEV = {"critical": Severity.CRITICAL, "high": Severity.HIGH,
                 "medium": Severity.MEDIUM, "low": Severity.LOW, "info": Severity.INFO}
+        # ZAP alert names that denote an injection/execution class issue — these
+        # warrant HIGH regardless of the coarse WARN/FAIL->low/medium mapping.
+        _HIGH_SIGNAL = ("sql injection", "cross site scripting", "remote code",
+                        "command injection", "path traversal", "remote os command",
+                        "server side", "ssrf", "xml external entity")
+
+        # --- ZAP: dedupe alerts across the baseline and active scans (both report
+        #     the same passive alerts); keep the active-scan instance, which has
+        #     higher confidence. Keyed by the alert name (without the [id] x<n>). ---
+        zap_best: dict[str, dict] = {}
+        for run in state.recon.get(t.id, {}).get("tool_observations", []):
+            if run.get("tool") not in ("zap", "zap-full"):
+                continue
+            active = run.get("tool") == "zap-full"
+            for obs in run.get("observations", []):
+                if obs.get("kind") != "zap_alert":
+                    continue
+                value = obs.get("value", "")
+                name = (value.split(" [")[0].strip() or value).lower()
+                cur = zap_best.get(name)
+                if cur is None or (active and not cur["active"]):
+                    zap_best[name] = {
+                        "value": value, "active": active,
+                        "sevhint": str(obs.get("severity_hint") or "info").lower()}
+        for info in zap_best.values():
+            value, active = info["value"], info["active"]
+            sev = _SEV.get(info["sevhint"], Severity.LOW)
+            if any(s in value.lower() for s in _HIGH_SIGNAL):
+                sev = Severity.HIGH
+            self._add(state, t, f"ZAP alert: {value[:80]}",
+                      FindingCategory.API_SECURITY, sev,
+                      f"OWASP ZAP flagged: {value}",
+                      "DAST alert from an OWASP ZAP "
+                      + ("active scan (payloads sent)." if active
+                         else "baseline (spider + passive) scan."),
+                      0.8 if active else 0.65,
+                      "OWASP ZAP active scan" if active else "OWASP ZAP baseline")
+
+        # --- other external-tool findings (ZAP handled above, deduped) ---
         for run in state.recon.get(t.id, {}).get("tool_observations", []):
             tool = run.get("tool", "")
             for obs in run.get("observations", []):
@@ -188,16 +227,6 @@ class APISecurityAgent(BaseAgent):
                               f"nikto reported: {value}",
                               "Web-server misconfiguration or dangerous-file exposure.",
                               0.6, "nikto server scan")
-                elif kind == "zap_alert":                          # OWASP ZAP
-                    active = tool == "zap-full"                    # active scan
-                    self._add(state, t, f"ZAP alert: {value[:80]}",
-                              FindingCategory.API_SECURITY, _SEV.get(sevhint, Severity.LOW),
-                              f"OWASP ZAP flagged: {value}",
-                              "DAST alert from an OWASP ZAP "
-                              + ("active scan (payloads sent)." if active
-                                 else "baseline (spider + passive) scan."),
-                              0.8 if active else 0.65,
-                              "OWASP ZAP active scan" if active else "OWASP ZAP baseline")
 
     def _add(self, state, t, title, cat, sev, root, impact, conf, rationale):
         state.candidates.append(
