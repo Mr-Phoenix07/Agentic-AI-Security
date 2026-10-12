@@ -1,0 +1,66 @@
+# AEGIS engagement — LIVE assessment of a self-hosted OpenAI-compatible LLM
+# endpoint (vLLM / Ollama / LM Studio). Runs the AI red-team agents against the
+# REAL model through the `vllm` provider, AND scans the inference server's HTTP
+# surface with httpx + nuclei. No mock provider — this talks to a live model.
+#
+# Point `endpoint`/`model` at your server:
+#   * vLLM:   endpoint "http://127.0.0.1:8000/v1"   model "<served-model-id>"
+#   * Ollama: endpoint "http://127.0.0.1:11434/v1"  model "<ollama-model>"
+# The provider speaks /v1/chat/completions either way. Set AEGIS_API_KEY in the
+# environment if your gateway requires a bearer token.
+#
+# Run:  aegis run examples/engagement-vllm-live.yaml
+
+engagement: "vllm-live-llm-assessment"
+workdir: "./aegis_runs"
+log_level: "INFO"
+
+authorization:
+  dry_run: false
+  rules:
+    - label: "localhost-llm"
+      hosts: ["127.0.0.1", "localhost", "::1"]
+      url_globs:
+        - "http://127.0.0.1:11434/*"
+        - "http://localhost:11434/*"
+        - "http://127.0.0.1:8000/*"      # vLLM default
+        - "http://localhost:8000/*"
+      model_ids: ["qwen3*", "qwen3.6*", "*"]
+      authorization_ref: "self-owned local LLM served via vLLM/Ollama"
+      max_requests: 100000
+
+# Small adaptive loop: live LLM calls are slow (~seconds each), so keep the probe
+# budget tight. Raise these for a deeper assessment once you've confirmed it runs.
+loop:
+  max_rounds: 1
+  probes_per_round: 3
+  min_rounds: 1
+  coverage_target: 0.5
+  confidence_target: 0.6
+  seed: 1337
+
+scan:
+  enabled: true
+  active: true
+  offline: true                 # only local hosts contacted (loopback allowed)
+  max_pages: 40
+  timeout_s: 6
+  tool_timeout_s: 300
+  external_tools: true
+  tools: ["httpx", "nuclei"]    # fingerprint + template scan of the LLM endpoint
+  execute_tools: true
+  auto_approve_active: true
+  max_risk: "active"
+
+targets:
+  # A single AI-gateway target: assessed BOTH as a live model (AI red-team via the
+  # vllm provider) AND as an HTTP surface (httpx + nuclei scan the endpoint).
+  - id: "local-llm"
+    kind: "ai_gateway"
+    provider: "vllm"                       # -> OpenAICompatProvider (/v1/chat/completions)
+    endpoint: "http://127.0.0.1:11434/v1"  # change to :8000/v1 for vLLM
+    model: "qwen3:1.7b"                    # change to your served model id
+    mode: "black_box"
+    params:
+      max_tokens: 256
+      temperature: 0
