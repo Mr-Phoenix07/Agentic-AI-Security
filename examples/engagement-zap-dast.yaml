@@ -1,0 +1,53 @@
+# Target-friendly DAST + SQLi engagement for a fragile single-process target
+# (e.g. OWASP Juice Shop). Runs httpx + ZAP baseline + ZAP active scan, then a
+# TARGETED sqlmap/ghauri confirmation on specific endpoints — no request-flooding
+# tools (nikto/brute-forcers) that would pre-degrade the server. The ZAP active
+# scan is paced (see scripts/zap_scan.py) to avoid OOM-crashing a target with no
+# rate limiting.
+#
+# Setup + run:
+#   1. one-time: ZAP installed at ~/.local/opt/zap; wrappers on PATH
+#      (cp scripts/zap_scan.py ~/.local/bin/zap-baseline.py and .../zap-full-scan.py)
+#   2. (recommended) restart Juice Shop with more heap, e.g.
+#        docker run --rm -p 3000:3000 -e NODE_OPTIONS=--max-old-space-size=8192 bkimminich/juice-shop
+#   3. export ZAP_SEED_URLS="http://127.0.0.1:3000/rest/products/search?q=test,..."
+#   4. aegis run examples/engagement-zap-dast.yaml
+engagement: "juiceshop-zap-dast"
+workdir: "./aegis_runs"
+log_level: "INFO"
+authorization:
+  dry_run: false
+  rules:
+    - label: "localhost-juiceshop"
+      hosts: ["127.0.0.1", "localhost", "::1"]
+      url_globs: ["http://127.0.0.1:3000/*", "http://localhost:3000/*"]
+      authorization_ref: "self-owned local OWASP Juice Shop"
+      max_requests: 5000000
+scan:
+  enabled: true
+  active: true
+  offline: true
+  max_pages: 100
+  timeout_s: 6
+  tool_timeout_s: 300
+  external_tools: true
+  tools: ["httpx", "zap", "zap-full", "sqlmap", "ghauri"]
+  execute_tools: true
+  auto_approve_active: true
+  exploitation: true          # required for zap-full (INTRUSIVE) + sqlmap/ghauri
+  credential_testing: false
+  max_risk: "dangerous"       # allow DANGEROUS-class sqlmap/ghauri
+  # targeted SQLi confirmation (no crawling flood) on Juice Shop's known points
+  sqli_level: 3
+  sqli_risk: 2
+  sqli_dbms: "sqlite"
+  injection_targets:
+    - url: "http://127.0.0.1:3000/rest/products/search?q=test"
+    - url: "http://127.0.0.1:3000/rest/user/login"
+      data: '{"email":"test@juice.sh","password":"foo"}'
+targets:
+  - id: "juiceshop"
+    kind: "rest_api"
+    provider: "mock"
+    endpoint: "http://127.0.0.1:3000"
+    mode: "black_box"

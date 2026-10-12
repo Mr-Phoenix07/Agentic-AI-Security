@@ -1,0 +1,54 @@
+# AEGIS engagement — assess a web app you are running on your own machine.
+#
+# Point this at whatever localhost site you're hosting (Juice Shop, your own app,
+# a staging server on 127.0.0.1). With `scan.enabled: true`, `aegis run` drives
+# the FULL platform against the LIVE site:
+#   * a built-in, stdlib HTTP crawler (no external tools) fetches the site,
+#     reviews security headers, discovers endpoints, and probes common/sensitive
+#     paths (passive + light-active);
+#   * if `scan.external_tools: true` AND httpx/nuclei are installed, it also runs
+#     those through the scope-gated ToolExecutor;
+#   * the API-security agent turns everything into findings in the report.
+#
+# Change the port/host below to match your site. Everything is fail-closed: only
+# the hosts/URLs authorized here are ever contacted.
+
+engagement: "local-site-assessment"
+workdir: "./aegis_runs"
+log_level: "INFO"
+
+authorization:
+  dry_run: false
+  rules:
+    - label: "localhost-web"
+      # Exact hosts (parsed from the URL) — no wildcard, so external look-alikes
+      # like 127.0.0.1.evil.com cannot match.
+      hosts: ["127.0.0.1", "localhost", "::1"]
+      # Port + trailing slash bound the globs to real paths on this instance.
+      url_globs:
+        - "http://127.0.0.1:3000/*"
+        - "http://localhost:3000/*"
+      authorization_ref: "self-owned local web application"
+      max_requests: 100000
+
+scan:
+  enabled: true            # turn on live scanning of the web target
+  active: true             # passive header review + light-active path probing
+  offline: true            # only local hosts may be contacted
+  max_pages: 60            # crawl budget
+  timeout_s: 5
+  external_tools: true     # also run httpx/nuclei IF installed (skipped if not)
+  tools: ["httpx", "nuclei"]
+  execute_tools: true      # false => validate tool argv without executing
+  auto_approve_active: true
+  max_risk: "active"       # never run intrusive/dangerous tools from here
+
+targets:
+  # A single web target is enough — the crawler discovers endpoints itself.
+  # (You may still declare known endpoints under metadata.endpoints; both the
+  #  declared review and the live crawl run.)
+  - id: "local-web"
+    kind: "rest_api"
+    provider: "mock"       # no LLM here; the mock keeps the non-web agents offline
+    endpoint: "http://127.0.0.1:3000"
+    mode: "black_box"

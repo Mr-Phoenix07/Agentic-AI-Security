@@ -98,12 +98,178 @@ def _build_ffuf(inv: ToolInvocation) -> list[str]:
     if "FUZZ" not in url:
         # place the FUZZ keyword on the path safely
         url = url.rstrip("/") + "/FUZZ"
-    return ["ffuf", "-s", "-w", wordlist, "-u", url, "-of", "json", "-o", "-"]
+    # -s prints only the matched FUZZ words (one per line) to stdout, which we
+    # capture and parse. -ac auto-calibrates a wildcard/soft-404 filter so
+    # single-page apps (which answer 200 for every path) don't flood results.
+    # (ffuf's file writer, -o, cannot target the captured stdout stream.)
+    argv = ["ffuf", "-s", "-ac", "-w", wordlist, "-u", url]
+    threads = inv.opt("threads")
+    if threads is not None:
+        argv += ["-t", str(int(threads))]
+    return argv
 
 
 def _build_gobuster(inv: ToolInvocation) -> list[str]:
     wordlist = _require_str(inv, "wordlist")
-    return ["gobuster", "dir", "-q", "-u", inv.target, "-w", wordlist]
+    argv = ["gobuster", "dir", "-q", "-u", inv.target, "-w", wordlist]
+    threads = inv.opt("threads")
+    if threads is not None:
+        argv += ["-t", str(int(threads))]
+    return argv
+
+
+def _build_katana(inv: ToolInvocation) -> list[str]:
+    # recursive crawler/spider; JSONL to stdout, constrained to the target's own
+    # FQDN so the crawl cannot wander to another host.
+    argv = ["katana", "-u", inv.target, "-jsonl", "-silent", "-nc",
+            "-field-scope", "fqdn"]
+    depth = inv.opt("depth")
+    if depth is not None:
+        d = int(depth)
+        if not 0 <= d <= 10:
+            raise ValueError("katana depth must be between 0 and 10")
+        argv += ["-depth", str(d)]
+    if inv.opt("js_crawl"):
+        argv += ["-jc"]                       # parse endpoints out of JS files
+    rate = inv.opt("rate_limit")
+    if rate is not None:
+        argv += ["-rate-limit", str(int(rate))]
+    # Bound the crawl so it always terminates and returns what it found: a
+    # per-request read timeout, and a total crawl-duration ceiling. Without
+    # these katana can hang on keep-alive connections and never emit output.
+    argv += ["-timeout", str(int(inv.opt("req_timeout", 10)))]
+    ct = inv.opt("crawl_duration")
+    if ct is not None:
+        argv += ["-ct", str(int(ct))]
+    return argv
+
+
+def _build_feroxbuster(inv: ToolInvocation) -> list[str]:
+    # fast recursive content discovery; JSONL to stdout.
+    wordlist = _require_str(inv, "wordlist")
+    argv = ["feroxbuster", "-u", inv.target, "-w", wordlist,
+            "--silent", "--json", "--no-state"]
+    threads = inv.opt("threads")
+    if threads is not None:
+        argv += ["--threads", str(int(threads))]
+    depth = inv.opt("depth")
+    if depth is not None:
+        d = int(depth)
+        if not 0 <= d <= 10:
+            raise ValueError("feroxbuster depth must be between 0 and 10")
+        argv += ["--depth", str(d)]
+    rate = inv.opt("rate_limit")
+    if rate is not None:
+        argv += ["--rate-limit", str(int(rate))]
+    return argv
+
+
+def _build_nikto(inv: ToolInvocation) -> list[str]:
+    # web server misconfiguration scanner. nikto's file writer appends the format
+    # extension (so -output /dev/stdout -> /dev/stdout.json, which fails), so we
+    # let it print its default '+ '-prefixed text report to stdout and parse that.
+    argv = ["nikto", "-host", inv.target, "-nointeractive", "-ask", "no"]
+    maxtime = inv.opt("maxtime")
+    if maxtime is not None:
+        argv += ["-maxtime", f"{int(maxtime)}s"]   # cap scan; report what's found
+    return argv
+
+
+def _build_arjun(inv: ToolInvocation) -> list[str]:
+    # HTTP parameter discovery; JSON to stdout.
+    argv = ["arjun", "-u", inv.target, "-oJ", "/dev/stdout", "-q"]
+    method = str(inv.opt("method", "GET")).upper()
+    if method in ("GET", "POST", "JSON", "XML"):
+        argv += ["-m", method]
+    return argv
+
+
+def _zap_argv(binary: str, inv: ToolInvocation) -> list[str]:
+    # Shared ZAP argv. Results print to stdout as WARN-*/FAIL-* lines; -I = do
+    # not return a failure exit on warnings. The headless wrapper on PATH drives
+    # a user-space ZAP daemon via its API and emits those lines.
+    argv = [binary, "-t", inv.target, "-I"]
+    if inv.opt("ajax"):
+        argv += ["-j"]                        # ajax spider for SPAs
+    mins = inv.opt("spider_minutes")
+    if mins is not None:
+        argv += ["-m", str(int(mins))]
+    budget = inv.opt("budget_minutes")        # overall wall-clock budget (minutes)
+    if budget is not None:
+        argv += ["-T", str(int(budget))]
+    return argv
+
+
+def _build_zap(inv: ToolInvocation) -> list[str]:
+    # ZAP baseline: spider (+optional AJAX spider) + passive rules only.
+    return _zap_argv("zap-baseline.py", inv)
+
+
+def _build_zap_full(inv: ToolInvocation) -> list[str]:
+    # ZAP full scan: baseline PLUS the active scanner (injection/XSS/etc.).
+    return _zap_argv("zap-full-scan.py", inv)
+
+
+# --- gated exploitation adapters (DANGEROUS; require exploitation=true + approval) --- #
+# Deliberately DETECTION/CONFIRMATION defaults only: no data-exfiltration
+# (--dump*, --passwords) and no OS-takeover (--os-shell/--os-pwn) flags. These
+# confirm whether an injection point exists on an AUTHORIZED target; they do not
+# weaponize it.
+def _build_sqlmap(inv: ToolInvocation) -> list[str]:
+    level = int(inv.opt("level", 1))
+    risk = int(inv.opt("risk", 1))
+    if not 1 <= level <= 5:
+        raise ValueError("sqlmap level must be 1-5")
+    if not 1 <= risk <= 3:
+        raise ValueError("sqlmap risk must be 1-3")
+    # --flush-session forces a clean re-test each run: sqlmap's per-host session
+    # persists across engagements, and a stale/locked session makes a later run
+    # exit early without testing. Deterministic detection matters more here.
+    argv = ["sqlmap", "-u", inv.target, "--batch", "--disable-coloring",
+            "--flush-session", "--level", str(level), "--risk", str(risk)]
+    _append_dbms(argv, inv.opt("dbms"))
+    data = inv.opt("data")
+    if data:
+        argv += ["--data", str(data)]     # test the POST body parameters
+    else:
+        # A URL that already carries query params (…?q=x) is tested directly by
+        # sqlmap — no extra flag needed. --forms is only for self-discovery on a
+        # bare base URL (it parses & submits HTML forms); adding it to a param'd
+        # URL makes sqlmap look for forms, find none, and abort. So --forms and
+        # --crawl are opt-in, used only by the base-URL self-discovery path.
+        if inv.opt("forms"):
+            argv += ["--forms"]
+        crawl = int(inv.opt("crawl", 0))
+        if crawl:
+            if not 0 <= crawl <= 5:
+                raise ValueError("sqlmap crawl depth must be 0-5")
+            argv += ["--crawl", str(crawl)]
+    return argv
+
+
+_ALLOWED_DBMS = {"sqlite", "mysql", "postgresql", "postgres", "mssql",
+                 "microsoft sql server", "oracle", "mariadb", "db2"}
+
+
+def _append_dbms(argv: list[str], dbms) -> None:
+    """Append an optional, validated --dbms hint (narrows/speeds detection)."""
+    if not dbms:
+        return
+    if str(dbms).lower() not in _ALLOWED_DBMS:
+        raise ValueError("unsupported dbms hint")
+    argv += ["--dbms", str(dbms).lower()]
+
+
+def _build_ghauri(inv: ToolInvocation) -> list[str]:
+    level = int(inv.opt("level", 1))
+    if not 1 <= level <= 3:
+        raise ValueError("ghauri level must be 1-3")
+    argv = ["ghauri", "-u", inv.target, "--batch", "--level", str(level)]
+    _append_dbms(argv, inv.opt("dbms"))
+    data = inv.opt("data")
+    if data:
+        argv += ["--data", str(data)]
+    return argv
 
 
 def _build_semgrep(inv: ToolInvocation) -> list[str]:
@@ -206,6 +372,171 @@ def _parse_httpx(result: ToolResult) -> list[ParsedObservation]:
     return _parse_jsonl(result, kind="http_service")
 
 
+def _parse_katana(result: ToolResult) -> list[ParsedObservation]:
+    """Extract discovered URLs from katana's JSONL (or plain-URL) output."""
+    obs: list[ParsedObservation] = []
+    for i, line in enumerate(result.stdout.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            if line.startswith("http"):        # tolerate plain-URL output
+                obs.append(ParsedObservation(kind="url", value=line, raw_ref=f"line:{i}"))
+            continue
+        req = obj.get("request", {}) if isinstance(obj, dict) else {}
+        url = (req.get("endpoint") if isinstance(req, dict) else None) \
+            or obj.get("endpoint") or obj.get("url")
+        if not isinstance(url, str):
+            continue
+        method = req.get("method", "GET") if isinstance(req, dict) else "GET"
+        obs.append(ParsedObservation(kind="url", value=url,
+                                     detail={"method": method}, raw_ref=f"line:{i}"))
+    return obs
+
+
+def _parse_gobuster(result: ToolResult) -> list[ParsedObservation]:
+    """Parse gobuster's text output. Older builds print ``/admin (Status: 200)``;
+    3.x prints the bare word ``admin  (Status: 200) [Size: n]`` with no leading
+    slash — handle both by keying on the ``(Status:`` marker."""
+    obs: list[ParsedObservation] = []
+    for i, line in enumerate(result.stdout.splitlines()):
+        s = line.strip()
+        if "Status:" not in s or not s:
+            continue
+        token = s.split()[0]
+        path = token if token.startswith("/") else "/" + token
+        j = s.find("Status:")
+        status = s[j + 7:].strip().strip(")]").split(")")[0].split(",")[0].strip()
+        obs.append(ParsedObservation(kind="path", value=path,
+                                     detail={"status": status}, raw_ref=f"line:{i}"))
+    return obs
+
+
+def _parse_ffuf(result: ToolResult) -> list[ParsedObservation]:
+    """Parse ffuf's silent (-s) stdout: one matched FUZZ word/path per line."""
+    obs: list[ParsedObservation] = []
+    for i, line in enumerate(result.stdout.splitlines()):
+        s = line.strip()
+        # skip blanks and any stray JSON/diagnostic lines
+        if not s or s.startswith("{") or s.startswith("[") or " " in s:
+            continue
+        obs.append(ParsedObservation(kind="path", value=s, raw_ref=f"line:{i}"))
+    return obs
+
+
+def _parse_feroxbuster(result: ToolResult) -> list[ParsedObservation]:
+    """Parse feroxbuster --json (JSONL) 'response' records into discovered URLs."""
+    obs: list[ParsedObservation] = []
+    for i, line in enumerate(result.stdout.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            o = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(o, dict) or o.get("type") != "response":
+            continue
+        url = o.get("url")
+        if isinstance(url, str) and url:
+            obs.append(ParsedObservation(
+                kind="url", value=url,
+                detail={"status": o.get("status"), "length": o.get("content_length")},
+                raw_ref=f"line:{i}"))
+    return obs
+
+
+def _parse_arjun(result: ToolResult) -> list[ParsedObservation]:
+    """Parse Arjun's JSON ({url: {params: [...]}} or {url: [...]}) into params.
+
+    Arjun interleaves its own progress/banner text with the JSON on stdout, so
+    json.loads over the whole stream fails. Extract the JSON object (first '{'
+    to last '}') before parsing.
+    """
+    obs: list[ParsedObservation] = []
+    raw = result.stdout or ""
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return obs
+    try:
+        data = json.loads(raw[start:end + 1])
+    except Exception:
+        return obs
+    if not isinstance(data, dict):
+        return obs
+    for url, info in data.items():
+        params = info.get("params", info) if isinstance(info, dict) else info
+        if isinstance(params, list) and params:
+            obs.append(ParsedObservation(
+                kind="parameters", value=str(url),
+                detail={"params": params}))
+    return obs
+
+
+# nikto '+ ' lines that are run banner/metadata, not findings.
+_NIKTO_BANNER = (
+    "target ip", "target hostname", "target port", "start time", "end time",
+    "platform", "root page", "no cgi", "scan terminated", "requests:",
+    "ssl info", "ciphers:", "1 host(s) tested", "host(s) tested",
+)
+
+
+def _parse_nikto(result: ToolResult) -> list[ParsedObservation]:
+    """Parse nikto's default text report: informative lines are prefixed ``+ ``.
+    Banner/metadata lines are filtered out; the rest are server findings."""
+    obs: list[ParsedObservation] = []
+    for i, line in enumerate(result.stdout.splitlines()):
+        s = line.strip()
+        if not s.startswith("+ "):
+            continue
+        msg = s[2:].strip()
+        low = msg.lower()
+        if not msg or any(low.startswith(b) for b in _NIKTO_BANNER):
+            continue
+        if low.startswith("server:") and "leak" not in low and "outdated" not in low:
+            continue  # plain server banner, not a finding
+        obs.append(ParsedObservation(kind="nikto_finding", value=msg[:200],
+                                     severity_hint="low", raw_ref=f"line:{i}"))
+    return obs
+
+
+def _parse_zap(result: ToolResult) -> list[ParsedObservation]:
+    """Parse zap-baseline.py stdout lines: 'WARN-NEW: <name> [id] x N' / 'FAIL-...'."""
+    obs: list[ParsedObservation] = []
+    for i, line in enumerate(result.stdout.splitlines()):
+        s = line.strip()
+        tag = next((t for t in ("FAIL-NEW:", "FAIL:", "WARN-NEW:", "WARN:") if s.startswith(t)), None)
+        if not tag:
+            continue
+        name = s[len(tag):].strip()
+        sev = "medium" if tag.startswith("FAIL") else "low"
+        obs.append(ParsedObservation(kind="zap_alert", value=name,
+                                     severity_hint=sev, raw_ref=f"line:{i}"))
+    return obs
+
+
+def _parse_sqli(result: ToolResult) -> list[ParsedObservation]:
+    """Detect a CONFIRMED injection in sqlmap/ghauri stdout (no data is dumped).
+
+    Only strong confirmation markers count. Tentative lines ("might be
+    injectable", "appears to be") and — critically — the negative verdict
+    ("... do not appear to be injectable") must NOT trigger a finding. The bare
+    word "injectable" is deliberately excluded because it is a substring of
+    sqlmap's own negative output, which previously produced false CRITICALs.
+    """
+    out = (result.stdout or "").lower()
+    positive = ("is vulnerable", "identified the following injection",
+                "the back-end dbms is")
+    if any(m in out for m in positive) and "is not vulnerable" not in out:
+        return [ParsedObservation(
+            kind="sql_injection", value="SQL injection point confirmed",
+            severity_hint="high",
+            detail={"evidence": "tool reported a confirmed injectable parameter"})]
+    return []
+
+
 # --------------------------------------------------------------------------- #
 # The catalog
 # --------------------------------------------------------------------------- #
@@ -263,22 +594,90 @@ def default_catalog() -> list[ToolSpec]:
         ),
         # -- web enumeration ------------------------------------------------ #
         ToolSpec(
+            name="katana", binary="katana", category=ToolCategory.WEB_ENUM,
+            purpose="Recursive web crawler/spider for endpoint discovery (JS-aware), "
+                    "scoped to the target's own FQDN.",
+            risk_level=RiskLevel.ACTIVE, supported_targets=_WEB,
+            applies_when=("http", "https", "web", "api"), evidence_format="jsonl",
+            input_schema={"target": "base URL", "depth": "max crawl depth (0-10)",
+                          "js_crawl": "parse endpoints from JS (bool)",
+                          "rate_limit": "max requests/sec"},
+            command_builder=_build_katana, parser=_parse_katana,
+            references=("https://github.com/projectdiscovery/katana",),
+        ),
+        ToolSpec(
             name="ffuf", binary="ffuf", category=ToolCategory.WEB_ENUM,
-            purpose="Content/endpoint discovery via wordlist fuzzing (operator wordlist).",
+            purpose="Content/endpoint discovery via wordlist fuzzing (e.g. SecLists).",
             risk_level=RiskLevel.ACTIVE, supported_targets=_WEB,
             applies_when=("http", "https", "web"), evidence_format="json",
-            input_schema={"target": "base URL", "wordlist": "path to operator wordlist"},
-            command_builder=_build_ffuf,
+            input_schema={"target": "base URL", "wordlist": "path to a wordlist (SecLists)"},
+            command_builder=_build_ffuf, parser=_parse_ffuf,
             references=("https://github.com/ffuf/ffuf",),
         ),
         ToolSpec(
             name="gobuster", binary="gobuster", category=ToolCategory.WEB_ENUM,
-            purpose="Directory/content discovery (operator wordlist).",
+            purpose="Directory/content discovery (wordlist, e.g. SecLists).",
             risk_level=RiskLevel.ACTIVE, supported_targets=_WEB,
             applies_when=("http", "https", "web"), evidence_format="text",
-            input_schema={"target": "base URL", "wordlist": "path to operator wordlist"},
-            command_builder=_build_gobuster,
+            input_schema={"target": "base URL", "wordlist": "path to a wordlist (SecLists)"},
+            command_builder=_build_gobuster, parser=_parse_gobuster,
             references=("https://github.com/OJ/gobuster",),
+        ),
+        ToolSpec(
+            name="feroxbuster", binary="feroxbuster", category=ToolCategory.WEB_ENUM,
+            purpose="Fast recursive content discovery (wordlist, e.g. SecLists).",
+            risk_level=RiskLevel.ACTIVE, supported_targets=_WEB,
+            applies_when=("http", "https", "web"), evidence_format="jsonl",
+            input_schema={"target": "base URL", "wordlist": "path to a wordlist",
+                          "depth": "recursion depth (0-10)", "rate_limit": "req/sec"},
+            command_builder=_build_feroxbuster, parser=_parse_feroxbuster,
+            references=("https://github.com/epi052/feroxbuster",),
+        ),
+        ToolSpec(
+            name="arjun", binary="arjun", category=ToolCategory.WEB_ENUM,
+            purpose="HTTP query/body parameter discovery.",
+            risk_level=RiskLevel.ACTIVE, supported_targets=_WEB,
+            applies_when=("http", "https", "web", "api"), evidence_format="json",
+            input_schema={"target": "URL", "method": "GET|POST|JSON|XML"},
+            command_builder=_build_arjun, parser=_parse_arjun,
+            references=("https://github.com/s0md3v/Arjun",),
+        ),
+        # -- web scan (server misconfig / DAST) ----------------------------- #
+        ToolSpec(
+            name="nikto", binary="nikto", category=ToolCategory.WEB_SCAN,
+            purpose="Web server misconfiguration & dangerous-file scanning.",
+            risk_level=RiskLevel.ACTIVE, supported_targets=_WEB,
+            applies_when=("http", "https", "web"), evidence_format="json",
+            input_schema={"target": "URL/host"},
+            command_builder=_build_nikto, parser=_parse_nikto,
+            references=("https://github.com/sullo/nikto",),
+        ),
+        ToolSpec(
+            name="zap", binary="zap-baseline.py", category=ToolCategory.WEB_SCAN,
+            purpose="OWASP ZAP baseline (spider + passive rules) DAST scan.",
+            risk_level=RiskLevel.ACTIVE, supported_targets=_WEB,
+            applies_when=("http", "https", "web", "api"), evidence_format="text",
+            default_timeout_s=900,
+            input_schema={"target": "URL", "ajax": "use ajax spider for SPAs (bool)",
+                          "spider_minutes": "spider time budget"},
+            command_builder=_build_zap, parser=_parse_zap,
+            references=("https://www.zaproxy.org/docs/docker/baseline-scan/",),
+        ),
+        ToolSpec(
+            name="zap-full", binary="zap-full-scan.py", category=ToolCategory.WEB_SCAN,
+            purpose="OWASP ZAP full DAST scan: spider + AJAX spider + ACTIVE scan "
+                    "(injection/XSS/etc.). Much deeper than baseline.",
+            # INTRUSIVE: the active scanner sends attack payloads, so it needs the
+            # engagement to allow INTRUSIVE+ risk (max_risk) and human approval.
+            risk_level=RiskLevel.INTRUSIVE, supported_targets=_WEB,
+            applies_when=("http", "https", "web", "api"), evidence_format="text",
+            default_timeout_s=2400,
+            input_schema={"target": "URL", "ajax": "use ajax spider for SPAs (bool)",
+                          "spider_minutes": "spider time budget"},
+            command_builder=_build_zap_full, parser=_parse_zap,
+            notes="Active DAST. Honours the ZAP_SCAN_BUDGET env (overall wall-clock) "
+                  "so it finishes within the per-tool timeout and shuts ZAP down.",
+            references=("https://www.zaproxy.org/docs/docker/full-scan/",),
         ),
         # -- static analysis (local, no network) ---------------------------- #
         ToolSpec(
@@ -316,16 +715,37 @@ def default_catalog() -> list[ToolSpec]:
         # ================================================================== #
         # Documentation-only contracts (no command_builder => never auto-run)
         # ================================================================== #
+        # ---- gated exploitation adapters ---------------------------------- #
+        # These now ship a command_builder (the "human-implemented scoped adapter"
+        # the design calls for), but remain DANGEROUS: the executor refuses them
+        # unless the engagement sets exploitation=true, the risk cap allows
+        # DANGEROUS, and the approval callback returns True. Defaults confirm an
+        # injection point only — no --dump/--os-shell data-theft or takeover.
         ToolSpec(
             name="sqlmap", binary="sqlmap", category=ToolCategory.EXPLOITATION,
-            purpose="Injection confirmation/validation. Documentation-only: requires "
-                    "a human-implemented, engagement-authorized adapter.",
+            purpose="SQL injection detection/confirmation (batch, bounded level/risk).",
             risk_level=RiskLevel.DANGEROUS, supported_targets=_WEB,
-            applies_when=("sql", "injection-candidate"),
-            command_builder=None,
-            notes="Gated. Enable exploitation=true and implement a scoped adapter "
-                  "with human approval before any validation is attempted.",
+            applies_when=("http", "https", "web", "sql", "injection-candidate"),
+            evidence_format="text",
+            input_schema={"target": "URL", "data": "POST body (optional)",
+                          "level": "1-5 (default 1)", "risk": "1-3 (default 1)"},
+            command_builder=_build_sqlmap, parser=_parse_sqli,
+            notes="Gated: requires exploitation=true + max_risk>=dangerous + approval. "
+                  "Detection defaults only; no data exfiltration/OS takeover flags.",
             references=("https://github.com/sqlmapproject/sqlmap",),
+        ),
+        ToolSpec(
+            name="ghauri", binary="ghauri", category=ToolCategory.EXPLOITATION,
+            purpose="SQL injection detection/confirmation (batch, bounded level).",
+            risk_level=RiskLevel.DANGEROUS, supported_targets=_WEB,
+            applies_when=("http", "https", "web", "sql", "injection-candidate"),
+            evidence_format="text",
+            input_schema={"target": "URL", "data": "POST body (optional)",
+                          "level": "1-3 (default 1)"},
+            command_builder=_build_ghauri, parser=_parse_sqli,
+            notes="Gated: requires exploitation=true + max_risk>=dangerous + approval. "
+                  "Detection defaults only.",
+            references=("https://github.com/r0oth3x49/ghauri",),
         ),
         ToolSpec(
             name="metasploit", binary="msfconsole", category=ToolCategory.EXPLOITATION,

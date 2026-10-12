@@ -249,10 +249,16 @@ class ToolExecutor:
         # 2) scope validation — fail-closed, nothing runs if out of scope
         decision = self.scope.check_url(inv.target)
         if not decision.allowed:
-            # some tools take bare hosts; re-check the extracted host as a URL-less target
+            # some tools take a bare host or host:port (e.g. nmap) rather than a
+            # URL; re-check the extracted host against the authorized host/CIDR
+            # allow-list. Only an authorized host flips the decision to allowed —
+            # this never widens scope, it just lets a host-form target match the
+            # same rule a URL-form target would.
             host = _host_of(inv.target)
-            if host and host != inv.target:
-                decision = self.scope.check_url(f"//{host}")
+            if host:
+                alt = self.scope.check_url(f"//{host}")
+                if alt.allowed:
+                    decision = alt
         rec.scope_allowed = decision.allowed
         rec.scope_reason = decision.reason
         if not decision.allowed:
@@ -305,6 +311,7 @@ class ToolExecutor:
         timeout = int(inv.opt("timeout_s", spec.default_timeout_s))
         start = time.time()
         try:
+            child_env = self._child_env()
             proc = subprocess.run(  # noqa: S603 - argv list, shell=False, validated
                 argv,
                 shell=False,
@@ -312,7 +319,7 @@ class ToolExecutor:
                 text=True,
                 timeout=timeout,
                 check=False,
-                env={"PATH": os.environ.get("PATH", "")},  # minimal env
+                env=child_env,
             )
             duration = time.time() - start
             rec.executed = True
@@ -346,11 +353,40 @@ class ToolExecutor:
             return ToolResult(False, spec.name, inv.target, argv,
                               refused_reason=str(exc))
 
+    # -- child environment -------------------------------------------------- #
+    # Vars every tool reasonably needs. Real tools need HOME and their XDG
+    # config/cache dirs (nuclei templates, ZAP ~/.ZAP, sqlmap output, ffuf/katana
+    # config) or they exit non-zero and emit nothing — but handing them the FULL
+    # operator environment would leak arbitrary secrets (API keys, cloud creds)
+    # to every spawned tool, including DANGEROUS ones. So pass a curated set.
+    _ENV_KEEP = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE",
+                 "TERM", "TMPDIR", "SHELL")
+    _ENV_PREFIX = ("XDG_", "ZAP_", "NUCLEI_", "LC_")
+
+    @classmethod
+    def _child_env(cls) -> dict[str, str]:
+        src = os.environ
+        env = {k: src[k] for k in cls._ENV_KEEP if k in src}
+        for k, v in src.items():
+            if any(k.startswith(p) for p in cls._ENV_PREFIX):
+                env[k] = v
+        env.setdefault("PATH", src.get("PATH", ""))
+        return env
+
     # -- parsing helper ----------------------------------------------------- #
     @staticmethod
     def parse(spec: ToolSpec, result: ToolResult) -> list[ParsedObservation]:
-        """Run the spec's parser over a result, if one is defined."""
-        if spec.parser is None or not result.ok:
+        """Run the spec's parser over a result, if one is defined.
+
+        Parsing is gated on *usable output*, not on a zero exit code: many
+        security tools (nikto, katana, sqlmap, ffuf, feroxbuster) return a
+        non-zero exit when they find something, are interrupted, or finish with
+        warnings, yet still emit valid, parseable stdout. Dry-runs and refusals
+        carry no stdout and are skipped. Parsers are defensive and never raise.
+        """
+        if spec.parser is None or result.dry_run:
+            return []
+        if not (result.stdout or "").strip():
             return []
         try:
             return list(spec.parser(result))

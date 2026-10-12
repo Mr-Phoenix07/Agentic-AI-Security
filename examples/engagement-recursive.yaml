@@ -1,0 +1,63 @@
+# AEGIS engagement — recursive live web assessment of a self-owned localhost site.
+#
+# This drives the FULL platform against the LIVE site with recursive discovery:
+#   1. katana        — recursive crawler/spider (depth-limited, scoped to the
+#                      target's own FQDN), JS-aware endpoint discovery;
+#   2. gobuster/ffuf — wordlist content discovery (uses SecLists if installed);
+#   3. the built-in stdlib prober then RE-PROBES every discovered endpoint for
+#      status, security headers, directory listings, and exposed sensitive files;
+#   4. nuclei        — template signature scan;
+#   5. httpx         — tech fingerprint.
+# Findings from all of the above flow into the report.
+#
+# Install the binaries to light each tool up (any that are missing are skipped
+# and recorded in the audit trail): katana, gobuster/ffuf, nuclei, httpx from
+# ProjectDiscovery/OJ, plus SecLists for wordlists. Nothing is required — with
+# no external tools installed this still runs the built-in recursive crawler.
+#
+# Everything is fail-closed: only the hosts/URLs authorized below are contacted,
+# katana is FQDN-scoped, and dangerous/credential tools stay documentation-only.
+
+engagement: "recursive-web-assessment"
+workdir: "./aegis_runs"
+log_level: "INFO"
+
+authorization:
+  dry_run: false
+  rules:
+    - label: "localhost-web"
+      hosts: ["127.0.0.1", "localhost", "::1"]
+      url_globs:
+        - "http://127.0.0.1:3000/*"
+        - "http://localhost:3000/*"
+      authorization_ref: "self-owned local web application"
+      max_requests: 1000000
+
+scan:
+  enabled: true
+  active: true
+  offline: true
+  max_pages: 200            # room for the recursive re-probe of discovered paths
+  timeout_s: 6
+  external_tools: true
+  # add/remove tools freely; unknown-to-target or gated tools are filtered out
+  tools: ["katana", "httpx", "nuclei", "gobuster", "ffuf"]
+  execute_tools: true       # false => validate every tool's argv without running
+  auto_approve_active: true # these ACTIVE tools are authorized for this owned lab
+  max_risk: "active"        # never intrusive/dangerous from here
+
+  # recursive discovery settings
+  recursive: true           # re-probe endpoints found by katana/gobuster/ffuf
+  crawl_depth: 3            # katana max depth
+  rate_limit: 100          # katana requests/sec (be polite even locally)
+  max_discovered: 500
+  # wordlist for gobuster/ffuf; leave null to auto-detect a SecLists path, e.g.
+  #   /usr/share/seclists/Discovery/Web-Content/common.txt
+  wordlist: null
+
+targets:
+  - id: "local-web"
+    kind: "rest_api"
+    provider: "mock"
+    endpoint: "http://127.0.0.1:3000"
+    mode: "black_box"

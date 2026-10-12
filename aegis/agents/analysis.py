@@ -117,7 +117,122 @@ class APISecurityAgent(BaseAgent):
                 self._mcp(state, t, surface)
             elif t.kind in _WEB_KINDS:
                 self._web(state, t, surface)
+                self._from_live_scan(state, t)
+                self._from_external_tools(state, t)
         return state
+
+    def _from_live_scan(self, state, t):
+        """Raise candidate findings from the built-in live crawler's results."""
+        live = state.recon.get(t.id, {}).get("live")
+        if not live or not live.get("reachable"):
+            return
+        base = live.get("base_url", t.id)
+        for path in live.get("exposed_sensitive", []):
+            state.candidates.append(self._finding(
+                t, f"Exposed sensitive resource: {path}",
+                FindingCategory.DATA_EXPOSURE, Severity.HIGH,
+                f"{base}{path} is reachable (HTTP 200) without authentication.",
+                "Source/config/secret exposure enables credential theft and "
+                "further compromise.", 0.85, rationale="live HTTP probe"))
+        for path in live.get("directory_listings", []):
+            state.candidates.append(self._finding(
+                t, f"Directory listing enabled: {path}",
+                FindingCategory.API_SECURITY, Severity.MEDIUM,
+                f"{base}{path} returns an auto-generated directory index.",
+                "Directory listing discloses file structure and hidden assets.",
+                0.8, rationale="live HTTP probe"))
+        missing = live.get("missing_security_headers", [])
+        if missing:
+            state.candidates.append(self._finding(
+                t, "Missing HTTP security headers",
+                FindingCategory.API_SECURITY, Severity.LOW,
+                f"{base} response is missing: {', '.join(missing)}.",
+                "Absent hardening headers increase clickjacking/MIME/XSS exposure.",
+                0.9, rationale="live HTTP probe"))
+
+    def _from_external_tools(self, state, t):
+        """Raise candidate findings from external-tool observations.
+
+        Handles signature scans (nuclei), server scans (nikto), DAST (ZAP), and
+        injection confirmation (sqlmap/ghauri). Discovery-only tools (katana,
+        gobuster, ffuf, feroxbuster, arjun) feed recon, not findings, here.
+        """
+        _SEV = {"critical": Severity.CRITICAL, "high": Severity.HIGH,
+                "medium": Severity.MEDIUM, "low": Severity.LOW, "info": Severity.INFO}
+        # ZAP alert names that denote an injection/execution class issue — these
+        # warrant HIGH regardless of the coarse WARN/FAIL->low/medium mapping.
+        _HIGH_SIGNAL = ("sql injection", "cross site scripting", "remote code",
+                        "command injection", "path traversal", "remote os command",
+                        "server side", "ssrf", "xml external entity")
+
+        # --- ZAP: dedupe alerts across the baseline and active scans (both report
+        #     the same passive alerts); keep the active-scan instance, which has
+        #     higher confidence. Keyed by the alert name (without the [id] x<n>). ---
+        zap_best: dict[str, dict] = {}
+        for run in state.recon.get(t.id, {}).get("tool_observations", []):
+            if run.get("tool") not in ("zap", "zap-full"):
+                continue
+            active = run.get("tool") == "zap-full"
+            for obs in run.get("observations", []):
+                if obs.get("kind") != "zap_alert":
+                    continue
+                value = obs.get("value", "")
+                name = (value.split(" [")[0].strip() or value).lower()
+                cur = zap_best.get(name)
+                if cur is None or (active and not cur["active"]):
+                    zap_best[name] = {
+                        "value": value, "active": active,
+                        "sevhint": str(obs.get("severity_hint") or "info").lower()}
+        for info in zap_best.values():
+            value, active = info["value"], info["active"]
+            sev = _SEV.get(info["sevhint"], Severity.LOW)
+            if any(s in value.lower() for s in _HIGH_SIGNAL):
+                sev = Severity.HIGH
+            self._add(state, t, f"ZAP alert: {value[:80]}",
+                      FindingCategory.API_SECURITY, sev,
+                      f"OWASP ZAP flagged: {value}",
+                      "DAST alert from an OWASP ZAP "
+                      + ("active scan (payloads sent)." if active
+                         else "baseline (spider + passive) scan."),
+                      0.8 if active else 0.65,
+                      "OWASP ZAP active scan" if active else "OWASP ZAP baseline")
+
+        # --- other external-tool findings (ZAP handled above, deduped) ---
+        for run in state.recon.get(t.id, {}).get("tool_observations", []):
+            tool = run.get("tool", "")
+            for obs in run.get("observations", []):
+                kind = obs.get("kind")
+                sevhint = str(obs.get("severity_hint") or "info").lower()
+                value = obs.get("value", "")
+                if kind == "template_match":                       # nuclei
+                    detail = obs.get("detail") if isinstance(obs.get("detail"), dict) else {}
+                    info = detail.get("info", {}) if isinstance(detail, dict) else {}
+                    # sevhint already carries the nuclei template severity
+                    # (_parse_nuclei sets it from info.severity).
+                    sev = sevhint
+                    name = info.get("name") or value or "signature match"
+                    self._add(state, t, f"Active signature match: {name}",
+                              FindingCategory.API_SECURITY, _SEV.get(sev, Severity.INFO),
+                              f"nuclei matched '{name}' at {value}.",
+                              "Confirmed by an active signature scan of the live surface.",
+                              0.75, "active signature scan (nuclei)")
+                elif kind == "sql_injection":                      # sqlmap / ghauri
+                    self._add(state, t, f"SQL injection confirmed ({tool})",
+                              FindingCategory.INPUT_VALIDATION, Severity.CRITICAL,
+                              f"{tool} confirmed an injectable parameter on the target.",
+                              "SQL injection permits unauthorized data access/modification "
+                              "(OWASP A03: Injection).",
+                              0.9, f"active injection confirmation ({tool})")
+                elif kind == "nikto_finding":                      # nikto
+                    self._add(state, t, f"Server issue (nikto): {value[:80]}",
+                              FindingCategory.API_SECURITY, _SEV.get(sevhint, Severity.LOW),
+                              f"nikto reported: {value}",
+                              "Web-server misconfiguration or dangerous-file exposure.",
+                              0.6, "nikto server scan")
+
+    def _add(self, state, t, title, cat, sev, root, impact, conf, rationale):
+        state.candidates.append(
+            self._finding(t, title, cat, sev, root, impact, conf, rationale=rationale))
 
     def _web(self, state, t, surface):
         for ep in surface.get("ai_endpoints", []):
@@ -162,11 +277,12 @@ class APISecurityAgent(BaseAgent):
                 "Excessive agency: prompt-influenced tool calls can take irreversible "
                 "actions unattended.", 0.88))
 
-    def _finding(self, t, title, category, severity, root, impact, conf) -> Finding:
+    def _finding(self, t, title, category, severity, root, impact, conf,
+                 rationale: str = "declared-surface analysis") -> Finding:
         return Finding(
             title=title, category=category, severity=severity,
             mode=EvaluationMode.GREY_BOX,
-            confidence=Confidence(conf, "declared-surface analysis", 1),
+            confidence=Confidence(conf, rationale, 1),
             target_id=t.id, summary=root, root_cause=root, impact=impact)
 
 

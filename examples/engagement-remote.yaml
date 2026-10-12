@@ -1,0 +1,59 @@
+# AEGIS engagement — LIVE REMOTE (internet) target.
+#
+# ⚠️  AUTHORIZED USE ONLY. AEGIS contacts a remote host ONLY if that exact host
+# is listed below in `authorization.rules`. The scope is fail-closed: an empty or
+# non-matching scope contacts nothing. Put ONLY systems you own or are explicitly
+# authorized (signed SoW / written permission) to assess, and record the
+# authorization reference. Active/intrusive/exploitation tooling against a remote
+# target is lawful only within that authorization.
+#
+# This differs from the localhost configs in one line: `scan.offline: false`,
+# which allows non-loopback hosts to be contacted — still only those in scope.
+#
+# Replace REPLACE-ME.example.com / the URL below with YOUR authorized target.
+# Run:  aegis run examples/engagement-remote.yaml
+# Preview without sending anything:  set scan.execute_tools: false (dry-run).
+
+engagement: "remote-authorized-assessment"
+workdir: "./aegis_runs"
+log_level: "INFO"
+
+authorization:
+  dry_run: false
+  rules:
+    - label: "remote-engagement"
+      # Exact authorized host(s). Globs allow subdomains you are authorized for.
+      hosts: ["REPLACE-ME.example.com"]
+      url_globs:
+        - "https://REPLACE-ME.example.com/*"
+      # Or authorize an IP range you own (uncomment and set):
+      # cidrs: ["203.0.113.0/24"]
+      authorization_ref: "SoW-XXXX / written authorization reference"
+      max_requests: 20000
+
+scan:
+  enabled: true
+  active: true
+  offline: false            # <-- allow REMOTE hosts (still only those in scope)
+  max_pages: 80
+  timeout_s: 10
+  tool_timeout_s: 300
+  external_tools: true
+  # Start recon/discovery-only. Escalate to active/exploitation ONLY within your
+  # written authorization (then raise max_risk / set exploitation: true).
+  tools: ["nmap", "httpx", "katana", "nuclei"]
+  execute_tools: true
+  auto_approve_active: true
+  exploitation: false
+  credential_testing: false
+  max_risk: "active"
+  rate_limit: 20            # be polite to a remote host
+  scan_threads: 5
+  katana_crawl_seconds: 90
+
+targets:
+  - id: "remote-web"
+    kind: "rest_api"
+    provider: "mock"        # no LLM; the mock keeps non-web agents offline
+    endpoint: "https://REPLACE-ME.example.com"
+    mode: "black_box"
