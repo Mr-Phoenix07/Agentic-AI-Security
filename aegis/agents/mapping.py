@@ -163,7 +163,11 @@ class WebReconAgent(BaseAgent):
 
         probe = LiveHttpProbe(state.config.scope, offline=sc.offline,
                               timeout_s=sc.timeout_s, max_pages=sc.max_pages)
-        result = probe.scan(target_url, active=sc.active, extra_paths=tuple(extra))
+        # On the recursive re-probe (discovered endpoints supplied) skip the
+        # common-path sweep — the baseline pass already did it — so we don't
+        # double-hit COMMON_PATHS on the target.
+        result = probe.scan(target_url, active=sc.active, extra_paths=tuple(extra),
+                            probe_common=not discovered)
         log = state.logger.bind(agent=self.name)
         log.info("web.crawl", "live crawl complete", target=t.id,
                  reachable=result.reachable, pages=len(result.pages),

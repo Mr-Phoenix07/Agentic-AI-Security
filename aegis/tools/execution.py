@@ -311,13 +311,7 @@ class ToolExecutor:
         timeout = int(inv.opt("timeout_s", spec.default_timeout_s))
         start = time.time()
         try:
-            # Inherit the operator's environment: real tools need HOME and their
-            # XDG config/cache dirs (nuclei templates, ffuf/katana config, etc.)
-            # or they exit non-zero and emit nothing. Safety comes from the
-            # shell-free, validated argv above, not from starving the child of
-            # its environment. PATH is guaranteed present for binary resolution.
-            child_env = os.environ.copy()
-            child_env.setdefault("PATH", os.environ.get("PATH", ""))
+            child_env = self._child_env()
             proc = subprocess.run(  # noqa: S603 - argv list, shell=False, validated
                 argv,
                 shell=False,
@@ -358,6 +352,26 @@ class ToolExecutor:
             self._record(rec)
             return ToolResult(False, spec.name, inv.target, argv,
                               refused_reason=str(exc))
+
+    # -- child environment -------------------------------------------------- #
+    # Vars every tool reasonably needs. Real tools need HOME and their XDG
+    # config/cache dirs (nuclei templates, ZAP ~/.ZAP, sqlmap output, ffuf/katana
+    # config) or they exit non-zero and emit nothing — but handing them the FULL
+    # operator environment would leak arbitrary secrets (API keys, cloud creds)
+    # to every spawned tool, including DANGEROUS ones. So pass a curated set.
+    _ENV_KEEP = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE",
+                 "TERM", "TMPDIR", "SHELL")
+    _ENV_PREFIX = ("XDG_", "ZAP_", "NUCLEI_", "LC_")
+
+    @classmethod
+    def _child_env(cls) -> dict[str, str]:
+        src = os.environ
+        env = {k: src[k] for k in cls._ENV_KEEP if k in src}
+        for k, v in src.items():
+            if any(k.startswith(p) for p in cls._ENV_PREFIX):
+                env[k] = v
+        env.setdefault("PATH", src.get("PATH", ""))
+        return env
 
     # -- parsing helper ----------------------------------------------------- #
     @staticmethod

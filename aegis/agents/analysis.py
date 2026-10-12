@@ -207,7 +207,9 @@ class APISecurityAgent(BaseAgent):
                 if kind == "template_match":                       # nuclei
                     detail = obs.get("detail") if isinstance(obs.get("detail"), dict) else {}
                     info = detail.get("info", {}) if isinstance(detail, dict) else {}
-                    sev = str(sevhint or info.get("severity") or "info").lower()
+                    # sevhint already carries the nuclei template severity
+                    # (_parse_nuclei sets it from info.severity).
+                    sev = sevhint
                     name = info.get("name") or value or "signature match"
                     self._add(state, t, f"Active signature match: {name}",
                               FindingCategory.API_SECURITY, _SEV.get(sev, Severity.INFO),

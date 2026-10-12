@@ -225,6 +225,57 @@ def test_audit_events_emitted_on_bus(registry, web_scope):
     assert seen[-1].payload["outcome"] == "allowed"
 
 
+def test_parse_sqli_ignores_negative_and_tentative_output():
+    # Regression: the bare substring "injectable" previously matched sqlmap's
+    # NEGATIVE verdict and produced a false CRITICAL. It must not.
+    from aegis.tools.catalog import _parse_sqli
+    from aegis.tools.execution import ToolResult
+
+    def res(out):
+        return ToolResult(True, "sqlmap", "t", [], stdout=out)
+
+    negative = ("all tested parameters do not appear to be injectable. "
+                "Try to increase values for '--level'/'--risk'")
+    tentative = ("GET parameter 'q' might not be injectable\n"
+                 "[WARNING] false positive or unexploitable injection point detected")
+    assert _parse_sqli(res(negative)) == []
+    assert _parse_sqli(res(tentative)) == []
+    # a genuine confirmation still fires
+    confirmed = ("GET parameter 'q' is vulnerable.\n"
+                 "sqlmap identified the following injection point(s)\n"
+                 "the back-end DBMS is SQLite")
+    out = _parse_sqli(res(confirmed))
+    assert len(out) == 1 and out[0].kind == "sql_injection"
+
+
+def test_parse_arjun_extracts_json_from_mixed_stdout():
+    # arjun interleaves banner/progress text with its JSON on stdout.
+    from aegis.tools.catalog import _parse_arjun
+    from aegis.tools.execution import ToolResult
+
+    mixed = ('[*] Scanning...\n[+] processing\n'
+             '{"http://t/search": {"params": ["q", "id"]}}\n[*] done\n')
+    out = _parse_arjun(ToolResult(True, "arjun", "t", [], stdout=mixed))
+    assert len(out) == 1 and out[0].detail["params"] == ["q", "id"]
+
+
+def test_child_env_excludes_secrets(monkeypatch):
+    # The curated child env must pass HOME/XDG/ZAP but drop arbitrary secrets.
+    from aegis.tools.execution import ToolExecutor
+
+    monkeypatch.setenv("HOME", "/home/u")
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/home/u/.config")
+    monkeypatch.setenv("ZAP_SEED_URLS", "http://127.0.0.1/a")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "super-secret")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+    env = ToolExecutor._child_env()
+    assert env.get("HOME") == "/home/u"
+    assert env.get("XDG_CONFIG_HOME") == "/home/u/.config"
+    assert env.get("ZAP_SEED_URLS") == "http://127.0.0.1/a"
+    assert "AWS_SECRET_ACCESS_KEY" not in env
+    assert "GITHUB_TOKEN" not in env
+
+
 def test_audit_record_persists_to_db(tmp_path, registry, web_scope):
     from aegis.storage.db import Database
 

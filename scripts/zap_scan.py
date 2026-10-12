@@ -122,12 +122,25 @@ def shutdown():
 
 
 def poll_until(view_path, key, done_pred, deadline, label, **params):
-    """Poll a ZAP status view until done_pred(value) or the deadline."""
+    """Poll a ZAP status view until done_pred(value) or the deadline.
+
+    A transient API error (``{"_error": ...}`` -> key missing) must NOT be read
+    as completion, or a long scan aborts early and under-reports. Keep polling
+    through transient errors; only give up after many consecutive failures
+    (ZAP genuinely gone) or at the deadline.
+    """
+    errors = 0
     while time.time() < deadline:
         r = api(view_path, **params)
         val = r.get(key)
-        if val is None:
-            return
+        if val is None:                       # transient error / unexpected shape
+            errors += 1
+            if errors >= 20:                  # ~60s of solid failures -> ZAP gone
+                log(f"{label}: repeated API errors, moving on")
+                return
+            time.sleep(3)
+            continue
+        errors = 0
         if done_pred(val):
             return
         time.sleep(3)

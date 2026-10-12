@@ -231,7 +231,8 @@ class LiveHttpProbe:
         return pr.title != sig["title"]
 
     def scan(self, base_url: str, *, active: bool = True,
-             extra_paths: tuple[str, ...] = ()) -> ScanResult:
+             extra_paths: tuple[str, ...] = (),
+             probe_common: bool = True) -> ScanResult:
         base_url = base_url.rstrip("/") or base_url
         result = ScanResult(base_url=base_url)
 
@@ -265,9 +266,14 @@ class LiveHttpProbe:
         if not active:
             return result
 
-        # active: probe common + discovered + operator-supplied paths
+        # active: probe common + discovered + operator-supplied paths. On a
+        # recursive re-probe (probe_common=False) skip the common-path sweep —
+        # the baseline pass already ran it — and only probe the newly supplied
+        # (tool-discovered) paths, avoiding duplicated load on the target.
+        candidate_paths = ((*COMMON_PATHS, *extra_paths, *result.discovered_paths)
+                           if probe_common else tuple(extra_paths))
         seen: set[str] = {"/"}
-        for path in (*COMMON_PATHS, *extra_paths, *result.discovered_paths):
+        for path in candidate_paths:
             if path in seen or self._fetched >= self.max_pages:
                 continue
             seen.add(path)

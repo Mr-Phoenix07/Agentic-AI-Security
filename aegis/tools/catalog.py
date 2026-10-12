@@ -449,10 +449,19 @@ def _parse_feroxbuster(result: ToolResult) -> list[ParsedObservation]:
 
 
 def _parse_arjun(result: ToolResult) -> list[ParsedObservation]:
-    """Parse Arjun's JSON ({url: {params: [...]}} or {url: [...]}) into params."""
+    """Parse Arjun's JSON ({url: {params: [...]}} or {url: [...]}) into params.
+
+    Arjun interleaves its own progress/banner text with the JSON on stdout, so
+    json.loads over the whole stream fails. Extract the JSON object (first '{'
+    to last '}') before parsing.
+    """
     obs: list[ParsedObservation] = []
+    raw = result.stdout or ""
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return obs
     try:
-        data = json.loads(result.stdout or "{}")
+        data = json.loads(raw[start:end + 1])
     except Exception:
         return obs
     if not isinstance(data, dict):
@@ -509,15 +518,22 @@ def _parse_zap(result: ToolResult) -> list[ParsedObservation]:
 
 
 def _parse_sqli(result: ToolResult) -> list[ParsedObservation]:
-    """Detect an injection confirmation in sqlmap/ghauri stdout (no data is dumped)."""
+    """Detect a CONFIRMED injection in sqlmap/ghauri stdout (no data is dumped).
+
+    Only strong confirmation markers count. Tentative lines ("might be
+    injectable", "appears to be") and — critically — the negative verdict
+    ("... do not appear to be injectable") must NOT trigger a finding. The bare
+    word "injectable" is deliberately excluded because it is a substring of
+    sqlmap's own negative output, which previously produced false CRITICALs.
+    """
     out = (result.stdout or "").lower()
-    markers = ("is vulnerable", "injection point", "identified the following injection",
-               "parameter appears to be", "might be injectable", "injectable")
-    if any(m in out for m in markers):
+    positive = ("is vulnerable", "identified the following injection",
+                "the back-end dbms is")
+    if any(m in out for m in positive) and "is not vulnerable" not in out:
         return [ParsedObservation(
             kind="sql_injection", value="SQL injection point confirmed",
             severity_hint="high",
-            detail={"evidence": "tool reported an injectable parameter"})]
+            detail={"evidence": "tool reported a confirmed injectable parameter"})]
     return []
 
 
