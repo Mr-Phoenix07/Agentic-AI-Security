@@ -2,91 +2,244 @@
 
 **Autonomous Agentic AI Security Assessment & Adversarial Evaluation Platform**
 
-AEGIS is a modular, explainable, **offline-capable** platform for continuous,
-*authorized* security evaluation of AI systems and web applications. It combines
-AI red-teaming, LLM behavioural evaluation, RAG assessment, agentic/MCP security,
-and web/API VAPT into one closed-loop, multi-agent workflow that produces
-reproducible evidence, standards-aligned findings, and defensive mitigation
-guidance.
+AEGIS is a modular, explainable platform for continuous, **authorized** security
+evaluation of **AI systems and web applications**. It combines AI red-teaming,
+LLM behavioural evaluation, RAG assessment, agentic/MCP security, and web/API
+VAPT into one closed-loop, multi-agent workflow that produces reproducible
+evidence, standards-aligned findings, and defensive mitigation guidance.
+
+It runs fully offline against a built-in deterministic mock, **and** against
+**live targets** — a self-hosted LLM (vLLM / Ollama / any OpenAI-compatible
+endpoint), a web app on localhost, or an authorized remote host on the internet —
+orchestrating a controlled toolchain (Nmap, Nuclei, Katana, httpx, ffuf,
+gobuster, feroxbuster, Arjun, Nikto, OWASP ZAP, sqlmap, ghauri) through a single
+audited choke point.
 
 > _AEGIS backronym: **A**daptive **E**valuation & **G**uarded **I**nspection **S**ystem._
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│  objectives ─▶ PLAN ─▶ MAP ─▶ EVALUATE ─▶ ANALYZE ─▶ REMEDIATE ─▶ REPORT │
-│                          ▲ 23 collaborating agents · adaptive loop ▲     │
-└──────────────────────────────────────────────────────────────────────┘
+objectives ─▶ PLAN ─▶ MAP ─▶ EVALUATE ─▶ ANALYZE ─▶ REMEDIATE ─▶ REPORT
+                      ▲ 23 collaborating agents · adaptive loop · audited tools ▲
 ```
 
 ---
 
 ## ⚖️ Authorized use only — this is a defensive tool
 
-AEGIS assesses **systems you own or are explicitly authorized to assess**. That
-constraint is not a footnote; it is an **enforced, fail-closed runtime gate**
-([`aegis/core/authorization.py`](aegis/core/authorization.py)):
+AEGIS assesses **systems you own or are explicitly authorized to assess.** That
+is not a footnote; it is an **enforced, fail-closed runtime gate**
+([`aegis/core/authorization.py`](aegis/core/authorization.py)) that every target
+interaction — provider calls *and* external tools — must pass:
 
-- Every request to any target passes an **allow-list** of scope rules (hosts,
-  URLs, model ids, CIDRs), optionally time-boxed and volume-capped, each carrying
-  an audit reference (signed SoW, ticket).
-- An **empty scope authorizes nothing.** Out-of-scope requests never reach a
-  provider — they are refused and recorded.
-- The prompt-mutation framework generates *semantics-preserving re-encodings of
-  benign requests* to measure robustness, parser resilience, and calibration —
-  **not** to defeat safeguards.
+- Every request is checked against an **allow-list** of scope rules (hosts, URL
+  globs, model ids, CIDRs), optionally time-boxed and volume-capped, each
+  carrying an audit reference (signed SoW, ticket).
+- **An empty scope authorizes nothing.** Out-of-scope requests never reach a
+  provider or spawn a process — they are refused and recorded.
+- A **remote** host is contacted only when (a) it is listed in the scope **and**
+  (b) `scan.offline: false` is set. The default is offline (loopback only).
+- Exploitation / credential / active-DAST tooling is gated behind explicit
+  engagement switches (`exploitation`, `credential_testing`, `max_risk`) **and**
+  a human approval callback, all default-off.
 
 ```bash
-aegis scope-check engagement.yaml --url https://not-authorized.example.com
+aegis scope-check examples/engagement-remote.yaml --url https://not-authorized.example.com
 # URL https://not-authorized.example.com: DENIED — not covered by any active scope rule
 ```
-
----
-
-## Why AEGIS
-
-| Principle | How it shows up |
-|-----------|-----------------|
-| **Offline capability** | Core has **zero hard dependencies**; a built-in deterministic mock target runs the whole pipeline with no network or API keys. |
-| **Reproducibility** | Content-addressed probes, seeded RNG, per-finding reproduction metadata, SQLite record of every probe/response/evidence. |
-| **Explainability** | Behavioural attribution always; TransformerLens/SHAP/Captum white-box when weights are available (graceful fallback otherwise). |
-| **Evidence-first** | Confidence is a Wilson-interval **precision** measure, not a vibe. Severity is derived from measured shortfall × confidence. |
-| **Vendor independence** | Pluggable providers (mock, any OpenAI-compatible endpoint: Ollama/vLLM/LM Studio/authorized gateways). |
-| **Standards-aligned** | Findings map to OWASP LLM Top 10, OWASP API Top 10, OWASP Top 10, ASVS, MITRE ATLAS, NIST AI RMF. |
 
 ---
 
 ## Quickstart
 
 ```bash
-# 1. Run the fully-offline demo (no keys, no network)
-python examples/run_demo.py
-#    ...or, if installed:  pip install -e .  &&  aegis demo
+# 0. Use the bundled virtualenv (or create one) and install the package
+python -m venv .venv && . .venv/bin/activate
+pip install -e ".[extras]"          # extras adds: requests (live providers), yaml, jinja2
 
-# 2. Inspect the agent collective and the workflow order
+# 1. Fully-offline demo — mock target, no keys, no network
+aegis demo                          # or:  python examples/run_demo.py
+
+# 2. Inspect the collective, tools, and methodologies
 aegis agents
+aegis tools list
+aegis methodology webapp
 
-# 3. See reproducible prompt variants for any text
-aegis mutate "Explain how TLS certificate validation works." --count 8
+# 3. Offline accuracy benchmark (precision / recall / F1 on ground-truth fixtures)
+aegis benchmark
 
-# 4. Browse the built-in testing methodologies (web-app, Active Directory, AI red-team)
-aegis methodology                       # list
-aegis methodology webapp                # OWASP WSTG-aligned web/API methodology
-aegis methodology active-directory      # MITRE ATT&CK-aligned AD methodology
-aegis methodology ai-redteam            # OWASP LLM/ASI + ATLAS AI red-team methodology
-
-# 5. Measure detection accuracy on offline ground-truth fixtures
-aegis benchmark                         # precision / recall / F1 summary
-
-# 6. Run a real engagement from a config (edit the authorization scope first!)
-aegis run examples/authorized_targets.yaml --fail-on high
+# 4. Run a real engagement (edit the authorization scope first!)
+aegis run examples/engagement-zap-dast.yaml --fail-on high
 ```
 
-Run the tests:
+Run the tests (fully offline):
 
 ```bash
-pip install pytest
-pytest -q            # 48 tests, fully offline
+pytest -q            # 93 tests
 ```
+
+---
+
+## Running against live targets
+
+AEGIS ships ready-to-edit engagement configs in [`examples/`](examples/). Every
+one is fail-closed: only the hosts/URLs/models you list in `authorization` are
+ever contacted. Set `scan.execute_tools: false` to **dry-run** (validate every
+tool's argv and the scope decision without sending anything).
+
+| Scenario | Config | What it does |
+|----------|--------|--------------|
+| Local web app (SPA-safe + exploitation) | [`engagement-zap-dast.yaml`](examples/engagement-zap-dast.yaml) | httpx + ZAP baseline + **paced ZAP active scan** + targeted sqlmap/ghauri against a localhost app |
+| Local web app (full toolchain) | [`engagement-fulltools-exploit.yaml`](examples/engagement-fulltools-exploit.yaml) | the complete tool set; best for robust/multi-process targets |
+| Recursive discovery | [`engagement-recursive.yaml`](examples/engagement-recursive.yaml) | katana/gobuster/ffuf discovery → recursive re-probe |
+| **Live LLM (vLLM / Ollama)** | [`engagement-vllm-live.yaml`](examples/engagement-vllm-live.yaml) | AI red-team the **real model** via the `vllm` provider + httpx/nuclei on the endpoint |
+| **Remote / internet target** | [`engagement-remote.yaml`](examples/engagement-remote.yaml) | `offline: false`; assess an **authorized** remote host |
+
+### Local web application
+
+Point the config's `endpoint` at your localhost app (e.g. OWASP Juice Shop on
+`http://127.0.0.1:3000`) and run:
+
+```bash
+aegis run examples/engagement-zap-dast.yaml
+```
+
+The built-in stdlib crawler reviews security headers and probes sensitive paths;
+the external tools (httpx, nuclei, ZAP, sqlmap, …) run through the scope-gated
+executor; findings flow into the report. *Note:* a single-process target (dev-mode
+Node, Flask, …) can be overwhelmed by the full toolchain — prefer the `zap-dast`
+config (paced, no request-flooders) for fragile targets.
+
+### Live LLM served by vLLM / Ollama
+
+AEGIS assesses a **real model** through any OpenAI-compatible endpoint. Set the
+provider to `vllm` (alias for the OpenAI-compatible provider) and point it at your
+server:
+
+```yaml
+targets:
+  - id: "local-llm"
+    kind: "ai_gateway"
+    provider: "vllm"                       # -> OpenAICompatProvider
+    endpoint: "http://127.0.0.1:8000/v1"   # vLLM; use :11434/v1 for Ollama
+    model: "<served-model-id>"
+    params: { max_tokens: 256, temperature: 0 }
+```
+
+```bash
+# vLLM:  python -m vllm.entrypoints.openai.api_server --model <hf-model> --port 8000
+export AEGIS_API_KEY=...          # only if your gateway requires a bearer token
+aegis run examples/engagement-vllm-live.yaml
+```
+
+The AI red-team agents send real `/v1/chat/completions` probes and measure
+instruction-following, response stability, calibration, long-context retention,
+etc., while nuclei/httpx scan the inference server's HTTP surface — one engagement,
+both dimensions.
+
+### Remote / internet target
+
+Edit [`engagement-remote.yaml`](examples/engagement-remote.yaml): put **your
+authorized** host(s) in `authorization.rules`, record the `authorization_ref`,
+and keep `scan.offline: false`. Start recon-only; escalate `max_risk` /
+`exploitation` only within your written authorization.
+
+```bash
+aegis run examples/engagement-remote.yaml
+```
+
+### Exploitation mode
+
+sqlmap, ghauri, and the ZAP **active** scan (`zap-full`) are DANGEROUS/INTRUSIVE
+and stay refused until the engagement opts in:
+
+```yaml
+scan:
+  exploitation: true        # unlocks sqlmap / ghauri / zap-full
+  max_risk: "dangerous"     # raise the runnable-risk ceiling
+  injection_targets:        # targeted, no-flood SQLi confirmation
+    - url: "http://127.0.0.1:3000/rest/products/search?q=test"
+```
+
+Defaults are **detection/confirmation only** — no data-exfiltration (`--dump`)
+or OS-takeover (`--os-shell`) flags.
+
+---
+
+## Controlled external-tool integration
+
+AEGIS orchestrates external tooling but **the language model never authors a
+command line.** Every tool passes through one controlled, auditable choke point
+([`ToolExecutor`](aegis/tools/execution.py)) with a standardized adapter
+contract, so "AI + Kali tools" becomes safe by construction. For **every** run it
+enforces, in order: tool known & executable → **fail-closed scope validation** →
+offline/remote policy → risk/engagement-switch gating → **no-shell argv** built
+from typed params → human-approval gate for ACTIVE+ tools → bounded execution
+(timeout, captured output) → an **immutable audit record** (`tool_runs`) for
+allowed, refused, and errored attempts alike. The default mode is **dry-run**.
+
+| Tool | Category | Risk | Notes |
+|------|----------|------|-------|
+| subfinder | recon | passive | subdomain enumeration |
+| nmap | network | active | service/version detection (bare host) |
+| httpx, whatweb | fingerprint | safe | tech detection |
+| katana | web-enum | active | JS-aware crawler (crawl-time bounded) |
+| gobuster, ffuf, feroxbuster | web-enum | active | content discovery (SecLists wordlist) |
+| arjun | web-enum | active | HTTP parameter discovery |
+| nuclei | web-scan | active | template signature scan |
+| nikto | web-scan | active | server misconfiguration scan |
+| zap | web-scan | active | **ZAP baseline** (spider + passive) |
+| zap-full | web-scan | intrusive | **ZAP active DAST** (paced; injection/XSS) |
+| semgrep, gitleaks, trivy | static/container | safe | local source / image posture |
+| sqlmap, ghauri | exploitation | dangerous | SQLi confirmation (gated) |
+| metasploit, hydra | exploitation/credential | dangerous | documentation-only contracts |
+
+```bash
+aegis tools list
+aegis tools select --kind rest_api --signals http,web,api,host --exploitation
+```
+
+ZAP runs **headless and Docker-free** via a user-space wrapper
+([`scripts/zap_scan.py`](scripts/zap_scan.py)); see **Installation** below. See
+[`docs/TOOL_INTEGRATION.md`](docs/TOOL_INTEGRATION.md) for the adapter contract.
+
+---
+
+## Installation
+
+**Core** has zero hard dependencies and runs the full offline pipeline. Live
+targets and external tools need a few extras:
+
+```bash
+pip install -e ".[extras]"          # requests (live LLM provider), pyyaml, jinja2
+```
+
+**External tools** — install the binaries you want on `PATH` (any that are
+missing are skipped and recorded in the audit trail). Prebuilt release binaries
+work without root:
+
+```bash
+# ProjectDiscovery / Go tools, feroxbuster -> ~/.local/bin (download release zips)
+# Python tools:
+pip install --user arjun
+pip install --user git+https://github.com/r0oth3x49/ghauri.git
+git clone --depth 1 https://github.com/sqlmapproject/sqlmap  ~/.local/opt/sqlmap   # wrap as 'sqlmap'
+git clone --depth 1 https://github.com/sullo/nikto           ~/.local/opt/nikto    # wrap as 'nikto'
+# Wordlist (SecLists), e.g. ~/.local/share/wordlists/common.txt (auto-detected)
+```
+
+**OWASP ZAP** (headless, user-space, needs Java 17+):
+
+```bash
+# download ZAP_x.y.z_Linux.tar.gz to ~/.local/opt/zap, then install the wrappers:
+cp scripts/zap_scan.py ~/.local/bin/zap-baseline.py
+cp scripts/zap_scan.py ~/.local/bin/zap-full-scan.py
+chmod +x ~/.local/bin/zap-*.py
+# seed the active scan with real endpoints (SPAs defeat the spider):
+export ZAP_SEED_URLS="http://127.0.0.1:3000/rest/products/search?q=test,..."
+```
+
+Optional backends (all graceful-fallback): `pip install -e ".[graph]"` (LangGraph),
+`".[explain]"` (TransformerLens/SHAP/Captum), `".[observability]"` (OpenTelemetry).
 
 ---
 
@@ -123,118 +276,59 @@ flowchart LR
     SCH --> MAP --> EVALUATE --> ANALYZE --> REMEDIATE --> REPORT
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for each agent's contract and
-the full data-flow / interaction diagrams.
+The **web_recon** agent drives the live crawler + external tools; the
+**api_security** agent turns tool observations (nuclei signatures, nikto issues,
+ZAP alerts, sqlmap/ghauri confirmations) and crawl results into candidate
+findings; **risk_analysis** finalises severity with cross-domain correlation. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for each agent's contract.
 
 ---
 
 ## What it assesses
 
-**AI behavioural dimensions** (black-box, provider-agnostic): instruction
-following, reasoning consistency, response stability, robustness to formatting,
-long-context retention, confidence calibration, multilingual behaviour, structured
-output, grounding, context management.
-
-**Prompt mutation framework** — 20 semantics-preserving transforms probing parser
-resilience and consistency: Unicode normalization, homoglyphs, mixed-script/
-Cyrillic, bidi isolates, zero-width injection, nested documents, taxonomy/tables,
-OCR-like noise, JSON/XML/YAML/Markdown re-serialization, academic/fictional
-framing, instruction-hierarchy layering, ambiguity, multi-document reasoning,
-persona/style changes, conversation restarts, long-context anchors, mixed
-language. Deterministic and reproducible.
-
-**RAG pipelines** — grounding rate, unsupported-citation detection, retrieval
-quality, source attribution.
-
-**Agentic / MCP surfaces** — dangerous tools callable without confirmation,
-unauthenticated transports, excessive agency.
-
-**Web / API surfaces** — unauthenticated AI/inference endpoints, missing rate
-limits (unbounded consumption), unauthenticated state-changing endpoints, BOLA/
-BFLA-prone patterns.
-
-**Cross-domain correlation** — behavioural weaknesses on an *exposed* AI/agent
-surface are automatically elevated.
+- **AI behavioural dimensions** (black-box, provider-agnostic): instruction
+  following, reasoning consistency, response stability, robustness to formatting,
+  long-context retention, confidence calibration, multilingual behaviour,
+  structured output, grounding, context management.
+- **Prompt mutation framework** — 20 semantics-preserving transforms (Unicode
+  normalization, homoglyphs, bidi, zero-width, nested docs, re-serialization,
+  framing, instruction-hierarchy, …). Deterministic and reproducible.
+- **RAG pipelines** — grounding rate, unsupported-citation detection, retrieval
+  quality, source attribution.
+- **Agentic / MCP surfaces** — dangerous tools callable without confirmation,
+  unauthenticated transports, excessive agency.
+- **Web / API surfaces** — unauthenticated AI/inference endpoints, missing rate
+  limits, unauthenticated state-changing endpoints, BOLA/BFLA-prone patterns,
+  plus live-tool findings (injection, XSS, misconfig, exposure).
+- **Cross-domain correlation** — a behavioural weakness on an *exposed* AI/agent
+  surface is automatically elevated.
 
 ---
 
 ## Testing methodologies
 
-AEGIS ships a **machine-readable, framework-mapped methodology knowledge base**
-([`aegis/methodology/`](aegis/methodology/)) covering the three domains it
-assesses. Each technique documents the assessment objective **and** the detection
-telemetry + mitigation that closes it — defensive by construction, no weaponized
-recipes — and every technique carries an industry-framework mapping. Query it with
-`aegis methodology`, and it is appended to every generated report (§11).
+A machine-readable, framework-mapped methodology knowledge base
+([`aegis/methodology/`](aegis/methodology/)) — queryable via `aegis methodology`
+and appended to every report.
 
-| Methodology | Aligned to | Doc | Code |
-|-------------|-----------|-----|------|
-| **Web Application & API Pentesting** | OWASP WSTG v4.2, OWASP Top 10, API Top 10, ASVS, PTES, ATT&CK | [METHODOLOGY_WEBAPP](docs/METHODOLOGY_WEBAPP.md) | [`methodology/webapp.py`](aegis/methodology/webapp.py) |
-| **Active Directory Security Assessment** | MITRE ATT&CK, MS *Securing AD* / tiering, CISA, NIST 800-53 | [METHODOLOGY_ACTIVE_DIRECTORY](docs/METHODOLOGY_ACTIVE_DIRECTORY.md) | [`methodology/active_directory.py`](aegis/methodology/active_directory.py) |
-| **AI / LLM / Agentic Red-Teaming** | OWASP LLM Top 10, OWASP Agentic (ASI), MITRE ATLAS, NIST AI RMF | [METHODOLOGY_AI_REDTEAM](docs/METHODOLOGY_AI_REDTEAM.md) | [`methodology/ai_redteam.py`](aegis/methodology/ai_redteam.py) |
-
-The AI red-team methodology integrates the phased model from the
-[AI Red-Teaming Guide](https://github.com/requie/AI-Red-Teaming-Guide) and the
-engagement-pipeline shape from [redamon](https://github.com/samugit83/redamon),
-re-expressed inside AEGIS's authorization-gated, safe-by-construction model.
+| Methodology | Aligned to | Doc |
+|-------------|-----------|-----|
+| **Web Application & API** | OWASP WSTG v4.2, Top 10, API Top 10, ASVS, PTES, ATT&CK | [METHODOLOGY_WEBAPP](docs/METHODOLOGY_WEBAPP.md) |
+| **Active Directory** | MITRE ATT&CK, MS tiering, CISA, NIST 800-53 | [METHODOLOGY_ACTIVE_DIRECTORY](docs/METHODOLOGY_ACTIVE_DIRECTORY.md) |
+| **AI / LLM / Agentic Red-Teaming** | OWASP LLM Top 10, OWASP Agentic (ASI), MITRE ATLAS, NIST AI RMF | [METHODOLOGY_AI_REDTEAM](docs/METHODOLOGY_AI_REDTEAM.md) |
 
 ---
 
-## Controlled external-tool integration
+## Accuracy benchmark & the adaptive loop
 
-AEGIS orchestrates external tooling (Nmap, Nuclei, httpx, ffuf, Semgrep, Trivy,
-…) — but the language model never authors a command line. Every tool passes
-through **one controlled, auditable choke point** with a standardized adapter
-contract, so "AI + Kali tools" glue becomes safe by construction.
+`aegis benchmark` runs the detection engine against self-contained fixtures with
+**known ground truth** and reports precision / recall / F1 — with hardened control
+cases and honestly-reported coverage gaps. See [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
-```bash
-# inventory the registry (executable adapters vs documentation-only contracts)
-aegis tools list
-
-# preview intelligent test selection for an observed target (planning only)
-aegis tools select --kind web_app --signals http,https,web,domain,graphql,jwt
-```
-
-The [`ToolExecutor`](aegis/tools/execution.py) enforces, for **every** run:
-fail-closed **scope validation** (out-of-scope targets never spawn a process),
-**no-shell** argv built from typed params, **dry-run by default**, **human
-approval gates** for active/intrusive tools, offline-mode network blocking,
-engagement-level `exploitation` / `credential_testing` switches (default off),
-and an **immutable audit record** (`tool_runs`) for allowed, refused, and errored
-attempts alike. Exploitation / credential / DoS tools are **documentation-only
-contracts** — present for planning, never auto-runnable until a human implements
-and authorizes a scoped adapter. See
-[`docs/TOOL_INTEGRATION.md`](docs/TOOL_INTEGRATION.md) and
-[`aegis/tools/`](aegis/tools/).
-
----
-
-## Accuracy benchmark
-
-How accurate is the detection engine? AEGIS ships an **offline accuracy
-benchmark** ([`aegis/benchmark/`](aegis/benchmark/), `aegis benchmark`) that runs
-the platform against self-contained fixtures with **known ground truth** and
-reports precision / recall / F1 — the security-tool equivalent of a labelled test
-set. Hardened *control* cases (which should yield nothing) make the precision
-number meaningful, and honest **coverage gaps** (e.g. authenticated BOLA, which
-needs live testing) are reported separately rather than hidden. Fully offline: no
-network, keys, or external targets. See [docs/BENCHMARK.md](docs/BENCHMARK.md) and
-the [latest result](docs/proof-of-concept/benchmark/BENCHMARK_REPORT.md).
-
----
-
-## The adaptive evaluation loop
-
-```
-receive objectives → plan → generate probes → execute → collect → analyze
-→ estimate confidence → find gaps → generate targeted follow-ups → refine
-→ (repeat until coverage & confidence targets, or budget) → findings + mitigations
-```
-
-The loop grows its probe pool each round, re-analyses the full pool so sample
-sizes (and thus confidence) rise, and biases follow-ups toward under-covered or
-low-confidence dimensions — weighted by **historical priors** from memory. Scoring
-of any individual probe is fixed, so adaptivity never compromises reproducibility.
+The adaptive loop grows its probe pool each round, re-analyses the full pool so
+confidence rises, and biases follow-ups toward under-covered dimensions —
+weighted by historical priors from memory. Per-probe scoring is fixed, so
+adaptivity never compromises reproducibility.
 
 ---
 
@@ -243,43 +337,42 @@ of any individual probe is fixed, so adaptivity never compromises reproducibilit
 ```
 aegis/
   core/          types · config · authorization gate · events · confidence · memory
-  methodology/   framework-mapped web-app · Active Directory · AI red-team methodologies
+  providers/     mock (offline) · openai_compat (vLLM/Ollama/gateways, "vllm" key)
+  targets/       LLM · RAG · Web/API · MCP adapters · live stdlib HTTP prober
+  tools/         adapter spec · catalog · registry (selection) · controlled executor
+  methodology/   framework-mapped web-app · Active Directory · AI red-team
   benchmark/     offline accuracy benchmark (ground-truth fixtures + scoring)
   mutation/      transform library + reproducible engine
-  providers/     mock (offline) · OpenAI-compatible (Ollama/vLLM/gateways)
-  targets/       LLM · RAG · Web/API · MCP target adapters
   evaluation/    metrics · behavioral/long-context/RAG analyzers · adaptive loop
   agents/        23 agents + rule-based adjudication
   graph/         shared state · orchestrator + phase state machine (LangGraph-optional)
   explainability/behavioral (always) · internals (TransformerLens/SHAP/Captum, optional)
   reporting/     framework mappings · report model · MD/HTML/JSON renderers
   observability/ structured logging · tracing (OpenTelemetry-optional)
-  storage/       SQLite schema + persistence
-  cli.py         run · demo · mutate · scope-check · agents · methodology · benchmark
-docs/            architecture, workflow, MCP, database, deployment, deliverables,
-                 methodology (web-app / Active Directory / AI red-team)
-tests/           48 offline tests
-examples/        authorized_targets.yaml · run_demo.py
+  storage/       SQLite schema + persistence (probes, results, evidence, tool_runs)
+  cli.py         run · demo · mutate · scope-check · agents · methodology · benchmark · tools
+scripts/         zap_scan.py (headless ZAP wrapper) · benchmark/poc helpers
+examples/        engagement configs (local web · recursive · ZAP · vLLM · remote) · run_demo.py
+docs/            architecture, workflow, MCP, database, deployment, methodologies, tool integration
+tests/           93 offline tests
 ```
 
 ---
 
-## The 15 design deliverables
+## CLI
 
-Every deliverable from the platform brief is implemented and documented — see the
-index in **[`docs/DELIVERABLES.md`](docs/DELIVERABLES.md)**.
-
-## Optional integrations
-
-Install extras to light up richer backends (all optional, all graceful-fallback):
-
-```bash
-pip install -e ".[extras]"          # yaml config, jinja2, requests providers
-pip install -e ".[graph]"           # LangGraph runtime
-pip install -e ".[explain]"         # TransformerLens / SHAP / Captum / BertViz
-pip install -e ".[observability]"   # OpenTelemetry / MLflow / Arize Phoenix
-pip install -e ".[integrations]"    # Promptfoo / DeepEval / Inspect AI / Garak / ART / TextAttack
 ```
+aegis run <config.yaml> [--fail-on low|medium|high|critical] [--workdir DIR] [--quiet]
+aegis demo [--rounds N]
+aegis scope-check <config.yaml> [--url URL] [--model ID]
+aegis tools {list|select --kind K --signals a,b,c [--exploitation]}
+aegis methodology [webapp|active-directory|ai-redteam] [--json|--export]
+aegis mutate "<text>" [--count N] [--seed S]
+aegis benchmark [--json]
+aegis agents
+```
+
+---
 
 ## License
 
