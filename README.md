@@ -19,7 +19,7 @@ audited choke point.
 
 ```
 objectives ─▶ PLAN ─▶ MAP ─▶ EVALUATE ─▶ ANALYZE ─▶ REMEDIATE ─▶ REPORT
-                      ▲ 23 collaborating agents · adaptive loop · audited tools ▲
+               ▲ 22 agents + orchestrator · adaptive loop · audited tools ▲
 ```
 
 ---
@@ -245,9 +245,9 @@ Optional backends (all graceful-fallback): `pip install -e ".[graph]"` (LangGrap
 
 ## The agent collective
 
-Twenty-three specialized, collaborating agents over a shared blackboard state,
-each with declared responsibilities, inputs/outputs, confidence estimation, and
-stopping conditions.
+Twenty-two specialized, collaborating agents over a shared blackboard state,
+coordinated by an orchestrator, each with declared responsibilities,
+inputs/outputs, confidence estimation, and stopping conditions.
 
 ```mermaid
 flowchart LR
@@ -344,7 +344,7 @@ aegis/
   benchmark/     offline accuracy benchmark (ground-truth fixtures + scoring)
   mutation/      transform library + reproducible engine
   evaluation/    metrics · behavioral/long-context/RAG analyzers · adaptive loop
-  agents/        23 agents + rule-based adjudication
+  agents/        22 agents + rule-based adjudication
   graph/         shared state · orchestrator + phase state machine (LangGraph-optional)
   explainability/behavioral (always) · internals (TransformerLens/SHAP/Captum, optional)
   reporting/     framework mappings · report model · MD/HTML/JSON renderers

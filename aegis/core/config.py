@@ -74,7 +74,11 @@ class ScanConfig:
     external_tools: bool = False
     tools: list[str] = field(default_factory=lambda: ["httpx", "nuclei"])
     execute_tools: bool = True             # False => dry-run the tools
-    auto_approve_active: bool = True       # approve ACTIVE tools (nuclei) unattended
+    # Default-off (fail-closed): the ACTIVE+ approval callback denies unless the
+    # engagement explicitly opts in. Set this true to pre-authorize ACTIVE tools
+    # (e.g. nuclei) to run unattended — this stands in for an interactive human
+    # approval and should only be set once the engagement is authorized for them.
+    auto_approve_active: bool = False
     credential_testing: bool = False
     exploitation: bool = False
     max_risk: str = "active"

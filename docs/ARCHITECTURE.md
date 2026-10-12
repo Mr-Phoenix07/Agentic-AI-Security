@@ -24,7 +24,7 @@ flowchart TB
       GRAPH[Graph / LangGraph-optional]
       STATE[(AssessmentState blackboard)]
     end
-    subgraph Agents[23-agent collective]
+    subgraph Agents[22-agent collective + orchestrator]
       A1[Planning] --- A2[Mapping/Recon]
       A2 --- A3[Interaction/Evaluation]
       A3 --- A4[Analysis/Adjudication]
@@ -103,7 +103,11 @@ sequenceDiagram
     R->>BB: report_paths (md/html/json/dashboard)
 ```
 
-### The 23 agents
+### The 22 agents (+ orchestrator)
+
+The collective is 22 specialized `BaseAgent` subclasses (the numbered rows below,
+which match `aegis agents` and `WORKFLOW_ORDER`), coordinated by the Orchestrator
+(row 0), which drives the phases but is not itself one of the collective.
 
 | # | Agent | Phase | Responsibility |
 |---|-------|-------|----------------|
