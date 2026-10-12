@@ -14,6 +14,17 @@ whose destination is not covered by an active rule is **refused** — it never
 reaches a provider.
 
 This is deliberately fail-closed: an empty scope authorizes nothing.
+
+Two evaluation entry points, with deliberately different contracts:
+
+* ``check_url`` / ``check_model`` are **pure predicates** — they report whether a
+  rule authorizes a target and never mutate state, so they are safe to call
+  repeatedly as a guard (per crawled page, or when a tool target is re-checked in
+  host form) without burning the volume budget.
+* ``require_url`` / ``require_model`` are the **enforcement** path used for an
+  actual interaction: each call consumes one unit of the matched rule's
+  rate/volume budget and raises :class:`AuthorizationError` (unless ``dry_run``)
+  when the scope denies or the ceiling is exceeded.
 """
 
 from __future__ import annotations
@@ -116,7 +127,21 @@ class AuthorizationScope:
         rules = [ScopeRule(**r) for r in (data.get("rules") or [])]
         return cls(rules=rules, dry_run=bool(data.get("dry_run", False)))
 
-    # -- evaluation --------------------------------------------------------- #
+    # -- matching (pure) ---------------------------------------------------- #
+    def _match_url(self, url: str) -> ScopeRule | None:
+        if not url:
+            return None
+        return next((r for r in self.rules if r.active() and r.matches_url(url)), None)
+
+    def _match_model(self, model_id: str) -> ScopeRule | None:
+        return next(
+            (r for r in self.rules if r.active() and r.matches_model(model_id)), None)
+
+    @staticmethod
+    def _authz_reason(rule: ScopeRule) -> str:
+        return (f"authorized by '{rule.label}'"
+                + (f" ({rule.authorization_ref})" if rule.authorization_ref else ""))
+
     def _record_and_check_rate(self, rule: ScopeRule) -> str | None:
         if rule.max_requests is None:
             return None
@@ -126,50 +151,52 @@ class AuthorizationScope:
             return f"rate/volume ceiling exceeded ({n} > {rule.max_requests})"
         return None
 
+    # -- evaluation (pure, side-effect free) -------------------------------- #
+    # ``check_*`` answers "does an active rule authorize this?" and nothing more.
+    # It never touches the rate/volume counters, so it is safe to call as a guard
+    # as many times as needed (e.g. once per crawled page, or twice when a tool
+    # target is re-checked in host form). Consuming the budget is the job of the
+    # raising ``require_*`` enforcement path below.
     def check_url(self, url: str) -> ScopeDecision:
         if not url:
             return ScopeDecision(False, "empty URL")
-        for rule in self.rules:
-            if not rule.active():
-                continue
-            if rule.matches_url(url):
-                over = self._record_and_check_rate(rule)
-                if over:
-                    return ScopeDecision(False, over, rule.label)
-                return ScopeDecision(True, f"authorized by '{rule.label}'"
-                                     + (f" ({rule.authorization_ref})"
-                                        if rule.authorization_ref else ""),
-                                     rule.label)
-        return ScopeDecision(False, f"'{url}' not covered by any active scope rule")
+        rule = self._match_url(url)
+        if rule is None:
+            return ScopeDecision(False, f"'{url}' not covered by any active scope rule")
+        return ScopeDecision(True, self._authz_reason(rule), rule.label)
 
     def check_model(self, model_id: str) -> ScopeDecision:
-        for rule in self.rules:
-            if not rule.active():
-                continue
-            if rule.matches_model(model_id):
-                over = self._record_and_check_rate(rule)
-                if over:
-                    return ScopeDecision(False, over, rule.label)
-                return ScopeDecision(True, f"authorized by '{rule.label}'", rule.label)
-        return ScopeDecision(
-            False, f"model '{model_id}' not covered by any active scope rule")
+        rule = self._match_model(model_id)
+        if rule is None:
+            return ScopeDecision(
+                False, f"model '{model_id}' not covered by any active scope rule")
+        return ScopeDecision(True, self._authz_reason(rule), rule.label)
 
-    # -- enforcement (raising) --------------------------------------------- #
-    def require_url(self, url: str) -> ScopeDecision:
-        d = self.check_url(url)
-        if not d.allowed and not self.dry_run:
+    # -- enforcement (raising; consumes one unit of the rate/volume budget) -- #
+    def _require(self, rule: ScopeRule | None, miss_reason: str) -> ScopeDecision:
+        if rule is None:
+            decision = ScopeDecision(False, miss_reason)
+        else:
+            over = self._record_and_check_rate(rule)
+            decision = (ScopeDecision(False, over, rule.label) if over
+                        else ScopeDecision(True, self._authz_reason(rule), rule.label))
+        if not decision.allowed and not self.dry_run:
             raise AuthorizationError(
-                f"Refused: {d.reason}. Add an explicit scope rule for authorized "
-                f"targets only.")
-        return d
+                f"Refused: {decision.reason}. Add an explicit scope rule for "
+                f"authorized targets only.")
+        return decision
+
+    def require_url(self, url: str) -> ScopeDecision:
+        """Enforce scope for a real interaction: consume one unit of the matched
+        rule's rate/volume budget and raise (unless dry-run) when the scope denies
+        or the ceiling is exceeded. Use :meth:`check_url` for a non-consuming guard."""
+        return self._require(self._match_url(url),
+                             f"'{url}' not covered by any active scope rule")
 
     def require_model(self, model_id: str) -> ScopeDecision:
-        d = self.check_model(model_id)
-        if not d.allowed and not self.dry_run:
-            raise AuthorizationError(
-                f"Refused: {d.reason}. Add an explicit scope rule for authorized "
-                f"targets only.")
-        return d
+        """Enforce scope for a model interaction (see :meth:`require_url`)."""
+        return self._require(self._match_model(model_id),
+                             f"model '{model_id}' not covered by any active scope rule")
 
     # -- introspection ------------------------------------------------------ #
     @property

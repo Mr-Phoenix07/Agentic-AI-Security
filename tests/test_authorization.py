@@ -46,9 +46,24 @@ def test_rate_ceiling_enforced():
     scope = AuthorizationScope([
         ScopeRule(label="lim", model_ids=["m-*"], max_requests=2)
     ])
-    assert scope.check_model("m-1").allowed
-    assert scope.check_model("m-1").allowed
-    assert not scope.check_model("m-1").allowed   # third exceeds ceiling
+    # The raising enforcement path consumes the rate/volume budget.
+    assert scope.require_model("m-1").allowed
+    assert scope.require_model("m-1").allowed
+    with pytest.raises(AuthorizationError):
+        scope.require_model("m-1")                # third exceeds ceiling
+
+
+def test_check_is_pure_and_does_not_consume_budget():
+    # check_* is a guard predicate: it must not burn the volume budget, however
+    # many times it is called. Only require_* consumes it.
+    scope = AuthorizationScope([
+        ScopeRule(label="lim", model_ids=["m-*"], max_requests=1)
+    ])
+    for _ in range(5):
+        assert scope.check_model("m-1").allowed   # pure: never exceeds the ceiling
+    assert scope.require_model("m-1").allowed     # first consuming call is allowed
+    with pytest.raises(AuthorizationError):
+        scope.require_model("m-1")                # budget now exhausted
 
 
 def test_time_window():
