@@ -82,6 +82,15 @@ class ScanConfig:
     credential_testing: bool = False
     exploitation: bool = False
     max_risk: str = "active"
+    # Built-in active web-exploit CONFIRMATION probes (reflected-XSS, path
+    # traversal/LFI, open redirect, optional SSRF). Fail-closed and opt-in: with
+    # active_exploit=False (default) the WebExploitAgent is gated out entirely.
+    # Payloads are benign unique canaries that confirm a bug exists — no data
+    # exfiltration, state change, or code execution. Requires scan.enabled too.
+    active_exploit: bool = False
+    # Optional out-of-band collaborator host (one you control) for SSRF
+    # confirmation, e.g. "oob.mytester.example". None => SSRF checks are skipped.
+    oob_host: str | None = None
     # recursive discovery (katana / gobuster / ffuf)
     recursive: bool = True                 # re-probe tool-discovered endpoints
     crawl_depth: int = 3                   # katana max crawl depth
@@ -128,6 +137,25 @@ class ScanConfig:
 
 
 @dataclass
+class RedTeamConfig:
+    """Adversarial model red-team suite (authorized LLM/agent testing).
+
+    Fail-closed and opt-in: with ``enabled=False`` (default) the
+    ``AdversarialRedTeamAgent`` is gated out and behaviour is unchanged. When
+    enabled it sends benign-canary prompt-injection, system-prompt-leak, and
+    RAG-injection probes at each authorized model target and reports
+    susceptibility (OWASP LLM01 / LLM07). Every probe still passes the provider's
+    authorization scope before leaving the process.
+    """
+
+    enabled: bool = False
+    trials: int = 5                        # repeats per attack (for a rate + CI)
+    prompt_injection: bool = True          # instruction-in-data override (LLM01)
+    system_prompt_leak: bool = True        # coax out a planted secret (LLM07)
+    rag_injection: bool = True             # grounding override via query (RAG only)
+
+
+@dataclass
 class Config:
     engagement: str = "unnamed-engagement"
     workdir: Path = field(default_factory=lambda: Path("./aegis_runs"))
@@ -136,6 +164,7 @@ class Config:
     targets: list[TargetConfig] = field(default_factory=list)
     loop: LoopConfig = field(default_factory=LoopConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
+    redteam: RedTeamConfig = field(default_factory=RedTeamConfig)
     log_level: str = "INFO"
     raw: dict = field(default_factory=dict)
 
@@ -150,6 +179,7 @@ class Config:
     def from_dict(cls, data: dict) -> Config:
         loop = LoopConfig(**(data.get("loop") or {}))
         scan = ScanConfig(**(data.get("scan") or {}))
+        redteam = RedTeamConfig(**(data.get("redteam") or {}))
         scope = AuthorizationScope.from_dict(data.get("authorization") or {})
         targets = [TargetConfig(**t) for t in (data.get("targets") or [])]
         return cls(
@@ -160,6 +190,7 @@ class Config:
             targets=targets,
             loop=loop,
             scan=scan,
+            redteam=redteam,
             log_level=data.get("log_level", "INFO"),
             raw=data,
         )
@@ -190,6 +221,7 @@ class Config:
             "targets": [t.__dict__ for t in self.targets],
             "loop": self.loop.__dict__,
             "scan": self.scan.__dict__,
+            "redteam": self.redteam.__dict__,
             "log_level": self.log_level,
         }
 

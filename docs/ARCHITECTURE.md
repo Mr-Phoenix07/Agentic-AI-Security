@@ -24,7 +24,7 @@ flowchart TB
       GRAPH[Graph / LangGraph-optional]
       STATE[(AssessmentState blackboard)]
     end
-    subgraph Agents[22-agent collective + orchestrator]
+    subgraph Agents[24-agent collective + orchestrator]
       A1[Planning] --- A2[Mapping/Recon]
       A2 --- A3[Interaction/Evaluation]
       A3 --- A4[Analysis/Adjudication]
@@ -103,11 +103,13 @@ sequenceDiagram
     R->>BB: report_paths (md/html/json/dashboard)
 ```
 
-### The 22 agents (+ orchestrator)
+### The 24 agents (+ orchestrator)
 
-The collective is 22 specialized `BaseAgent` subclasses (the numbered rows below,
+The collective is 24 specialized `BaseAgent` subclasses (the numbered rows below,
 which match `aegis agents` and `WORKFLOW_ORDER`), coordinated by the Orchestrator
-(row 0), which drives the phases but is not itself one of the collective.
+(row 0), which drives the phases but is not itself one of the collective. Rows 11
+and 16 are **offensive** agents that stay gated off (via `should_run`) unless the
+engagement sets `redteam.enabled` / `scan.active_exploit` respectively.
 
 | # | Agent | Phase | Responsibility |
 |---|-------|-------|----------------|
@@ -122,18 +124,20 @@ which match `aegis agents` and `WORKFLOW_ORDER`), coordinated by the Orchestrato
 | 8 | Prompt Optimization | evaluate | Prioritize transforms via historical priors (bandit) |
 | 9 | Conversation | evaluate | Multi-turn context-management probe |
 | 10 | Adaptive Evaluation | evaluate | Closed-loop evaluator; persist probes/observations |
-| 11 | Long-Context | evaluate | Systematic recall-vs-distance sweep |
-| 12 | RAG Analysis | evaluate | Grounding, citation, retrieval quality |
-| 13 | Information Verification | analyze | Corroborate/aggregate; flag thin data |
-| 14 | API Security | analyze | OWASP API Top 10 / excessive-agency surface checks |
-| 15 | Vulnerability Assessment | analyze | Observations → candidate findings (thresholds) |
-| 16 | Controlled Validation | analyze | Safe, authorized confirmatory re-test |
-| 17 | Evidence Collection | analyze | Reproduction-grade evidence per finding |
-| 18 | Risk Analysis | analyze | Finalize severity; cross-domain correlation |
-| 19 | Explainability | remediate | Behavioral + white-box-optional explanations |
-| 20 | Mitigation Recommendation | remediate | Frameworks + mitigations + regression tests |
-| 21 | Reporting | report | Assemble + render MD/HTML/JSON; persist |
-| 22 | Dashboard | report | Machine-readable coverage/metric time-series |
+| 11 | Adversarial Red-Team ⚔️ | evaluate | **Gated.** Benign-canary prompt-injection / system-prompt-leak / RAG-injection susceptibility (OWASP LLM01/LLM07) |
+| 12 | Long-Context | evaluate | Systematic recall-vs-distance sweep |
+| 13 | RAG Analysis | evaluate | Grounding, citation, retrieval quality |
+| 14 | Information Verification | analyze | Corroborate/aggregate; flag thin data |
+| 15 | API Security | analyze | OWASP API Top 10 / excessive-agency surface checks |
+| 16 | Web Exploit ⚔️ | analyze | **Gated.** Active, scope-gated confirmation of reflected XSS / path traversal / open redirect / SSRF |
+| 17 | Vulnerability Assessment | analyze | Observations → candidate findings (thresholds) |
+| 18 | Controlled Validation | analyze | Safe, authorized confirmatory re-test |
+| 19 | Evidence Collection | analyze | Reproduction-grade evidence per finding |
+| 20 | Risk Analysis | analyze | Finalize severity; cross-domain correlation |
+| 21 | Explainability | remediate | Behavioral + white-box-optional explanations |
+| 22 | Mitigation Recommendation | remediate | Frameworks + mitigations + regression tests |
+| 23 | Reporting | report | Assemble + render MD/HTML/JSON; persist |
+| 24 | Dashboard | report | Machine-readable coverage/metric time-series |
 
 Each agent extends `BaseAgent`, whose lifecycle wraps `_run` with tracing,
 logging, bus events, confidence estimation, and a `should_run` **stopping/gating
