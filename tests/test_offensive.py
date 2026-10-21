@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl, urlparse
 import pytest
 
 from aegis.agents.offensive import AdversarialRedTeamAgent, WebExploitAgent
+from aegis.agents.planning import Planner
 from aegis.core.authorization import AuthorizationScope, ScopeRule, localhost_scope
 from aegis.core.config import Config, LoopConfig, RedTeamConfig, ScanConfig, TargetConfig
 from aegis.core.types import FindingCategory
@@ -118,6 +119,24 @@ def test_web_exploit_agent_raises_findings(live_server, tmp_path):
     assert FindingCategory.DATA_EXPOSURE in cats        # path traversal
     assert all(c.evidence_ids for c in state.candidates)
     assert not state.errors
+    # every active-probe request is recorded in the append-only tool_runs audit
+    runs = state.db.tool_runs(state.assessment_id)
+    assert runs and all(r["tool"] == "web-exploit" for r in runs)
+
+
+def test_web_exploit_audits_requests_even_when_nothing_found(live_server, tmp_path):
+    base = live_server(secure=True)
+    cfg = Config(
+        engagement="audit-test", scope=_scope_for(base), workdir=tmp_path,
+        db_path=tmp_path / "a.db",
+        scan=ScanConfig(enabled=True, active_exploit=True, offline=True, timeout_s=5))
+    cfg.targets = [TargetConfig(id="app", kind="web_app", provider="mock",
+                                endpoint=base)]
+    state = build_state(cfg)
+    state = WebExploitAgent().run(state)
+    assert not state.candidates                          # secure app => no findings
+    runs = state.db.tool_runs(state.assessment_id)       # but requests still audited
+    assert runs and any(r["executed"] and r["scope_allowed"] for r in runs)
 
 
 def test_full_pipeline_with_active_exploit(live_server, tmp_path):
@@ -207,3 +226,25 @@ def test_redteam_gated_off_by_default(tmp_path):
     state = build_state(cfg)
     assert not AdversarialRedTeamAgent().should_run(state)
     assert cfg.redteam.enabled is False
+
+
+def test_adversarial_probe_category_matches_attack(tmp_path):
+    # Each attack family persists its probe under its own category, not a blanket
+    # PROMPT_INJECTION: system-prompt-leak probes are stored as data_exposure.
+    state = _redteam_state(
+        tmp_path, _VulnerableProvider(scope=localhost_scope(), model="mock-secure-1"))
+    state = AdversarialRedTeamAgent().run(state)
+    cats = {r[0] for r in state.db.conn.execute(
+        "SELECT DISTINCT category FROM probes").fetchall()}
+    assert "prompt_injection" in cats                    # injection probes
+    assert "data_exposure" in cats                       # system-prompt-leak probes
+
+
+def test_planner_lists_offensive_agents_only_when_enabled():
+    off = Config()                                       # defaults: both gated off
+    assert Planner._with_offensive(["api_security"], off) == ["api_security"]
+    assert Planner._with_offensive(["adaptive_evaluation"], off) == ["adaptive_evaluation"]
+    on = Config(scan=ScanConfig(active_exploit=True), redteam=RedTeamConfig(enabled=True))
+    assert Planner._with_offensive(["api_security"], on) == ["api_security", "web_exploit"]
+    assert Planner._with_offensive(["adaptive_evaluation"], on) == \
+        ["adaptive_evaluation", "adversarial_redteam"]

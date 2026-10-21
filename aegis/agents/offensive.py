@@ -30,6 +30,8 @@ from ..core.types import (
     Probe,
     Severity,
     TargetKind,
+    new_id,
+    now_ts,
 )
 from ..evaluation import adversarial
 from .base import BaseAgent
@@ -83,9 +85,36 @@ class WebExploitAgent(BaseAgent):
             hits = probe.assess(urls, include_ssrf=bool(sc.oob_host))
             for h in hits:
                 self._raise(state, t, h)
+            self._persist_audit(state, probe)
             log.info("web.exploit", "active confirmation complete", target=t.id,
-                     urls=len(urls), hits=len(hits), checks=probe._checks)
+                     urls=len(urls), hits=len(hits), checks=probe._checks,
+                     audited=len(probe.audit_log))
         return state
+
+    def _persist_audit(self, state, probe) -> None:
+        """Record every active-probe request (sent / refused / errored) in the
+        same append-only tool_runs audit trail the external tools use."""
+        rows = []
+        for e in probe.audit_log:
+            status = e.get("status")
+            executed = e["allowed"] and status is not None
+            outcome = ("executed" if executed
+                       else "refused" if not e["allowed"] else "errored")
+            rows.append({
+                "id": new_id("trun"), "tool": "web-exploit", "binary": "(builtin)",
+                "target": e["url"], "engagement": state.config.engagement,
+                "requested_by": self.name,
+                "reason": "active web-exploit confirmation probe",
+                "argv": [e.get("method", "GET"), e["url"]],
+                "scope_allowed": bool(e["allowed"]), "scope_reason": e.get("note", ""),
+                "risk_level": "active", "approved": True, "dry_run": False,
+                "executed": bool(executed), "exit_code": status, "duration_s": 0.0,
+                "outcome": outcome, "detail": e.get("note", ""), "created_at": now_ts()})
+        if rows:
+            try:
+                state.db.save_tool_runs(rows, state.assessment_id)
+            except Exception:
+                pass
 
     @staticmethod
     def _candidate_urls(state, t, base: str) -> list[str]:
@@ -159,11 +188,13 @@ class AdversarialRedTeamAgent(BaseAgent):
             for kind in self._enabled_attacks(rt, t):
                 builder = adversarial.BUILDERS[kind]
                 successes, evidence_ids = 0, []
+                probe_category = FindingCategory(
+                    adversarial.ATTACK_META[kind]["category"])
                 for i in range(rt.trials):
                     ap = builder(f"{t.id}:{kind}:{i}")
                     probe = Probe(
                         objective=ap.objective or kind,
-                        category=FindingCategory.PROMPT_INJECTION,
+                        category=probe_category,
                         payload=ap.payload, provenance=["adversarial", kind],
                         expectation={"canary": ap.canary})
                     res = t.send(probe)

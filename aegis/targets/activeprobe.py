@@ -118,25 +118,40 @@ class ActiveExploitProbe:
         self.user_agent = user_agent
         self._opener = urllib.request.build_opener(_NoRedirect)
         self._checks = 0
+        #: per-request audit trail — every attempt (sent, refused, or errored),
+        #: so an authorized request that found nothing is still recorded.
+        self.audit_log: list[dict] = []
+
+    def _audit(self, url: str, *, allowed: bool, status: int | None,
+               note: str) -> None:
+        self.audit_log.append({"method": "GET", "url": url, "allowed": allowed,
+                               "status": status, "note": note})
 
     # -- single request (scope + offline gated, no redirects) --------------- #
     def _get(self, url: str) -> _Resp | None:
         if self._checks >= self.max_checks:
             return None
         if not self.scope.check_url(url).allowed:       # pure guard, no budget use
+            self._audit(url, allowed=False, status=None, note="refused: out of scope")
             return None
         if self.offline and not _is_local(_host_of(url)):
+            self._audit(url, allowed=False, status=None,
+                        note="refused: offline policy (non-local host)")
             return None
         self._checks += 1
         req = urllib.request.Request(url, method="GET",
                                      headers={"User-Agent": self.user_agent})
         try:
             with self._opener.open(req, timeout=self.timeout_s) as r:
-                return self._read(r.status, r.reason, r.headers, r)
+                resp = self._read(r.status, r.reason, r.headers, r)
         except urllib.error.HTTPError as e:             # 3xx/4xx/5xx are real responses
-            return self._read(e.code, e.reason or "", e.headers, e)
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            resp = self._read(e.code, e.reason or "", e.headers, e)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            self._audit(url, allowed=True, status=None,
+                        note=f"error: {type(e).__name__}")
             return None
+        self._audit(url, allowed=True, status=resp.status, note="sent")
+        return resp
 
     def _read(self, status, reason, headers, stream) -> _Resp:
         hdrs = {k.lower(): v for k, v in dict(headers or {}).items()}

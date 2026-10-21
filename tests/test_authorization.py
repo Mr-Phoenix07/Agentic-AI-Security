@@ -78,3 +78,12 @@ def test_dry_run_does_not_raise():
     # No rules, but dry_run means require_* returns a decision instead of raising.
     d = scope.require_url("https://example.com")
     assert not d.allowed
+
+
+def test_dry_run_does_not_consume_budget():
+    # A dry run validates scope without spending the rate/volume ceiling, so it
+    # can never trip (or even advance) it however many times it is called.
+    scope = AuthorizationScope(
+        [ScopeRule(label="lim", model_ids=["m-*"], max_requests=1)], dry_run=True)
+    for _ in range(5):
+        assert scope.require_model("m-1").allowed
