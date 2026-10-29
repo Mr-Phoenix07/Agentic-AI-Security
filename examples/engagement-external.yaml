@@ -79,6 +79,18 @@ redteam:
   enabled: false
   trials: 5
 
+# External AI red-team toolchain (ai_toolchain agent) — runs garak / promptfoo
+# against an authorized MODEL endpoint target (add one under `targets:` below).
+# Enable by adding the tools to scan.tools, e.g.:
+#   scan.tools: [..., "garak", "promptfoo"]
+# and configuring:
+#   scan.garak_model_type: "openai"      # garak generator for the endpoint
+#   scan.garak_probes: null              # e.g. "promptinject,dan" (default: all)
+#   scan.promptfoo_config: null          # path to a promptfoo config (required to run it)
+#   scan.tool_env: ["OPENAI_API_BASE", "OPENAI_API_KEY"]  # forward ONLY these to tools
+# tool_env explicitly forwards the model's base URL / key to the tool subprocess;
+# every other secret stays dropped from the child environment.
+
 targets:
   - id: "acme-external-web"
     kind: "web_app"

@@ -11,12 +11,12 @@ from aegis.providers import ProviderRequest, build_provider
 
 
 def test_registry_agent_count():
-    # 24 specialized agents (+ Orchestrator runner): 22 core + 2 offensive
-    # (web_exploit, adversarial_redteam), the latter gated off by default.
-    assert len(WORKFLOW_ORDER) == 24
+    # 25 specialized agents (+ Orchestrator runner): 22 core + 3 offensive
+    # (web_exploit, adversarial_redteam, ai_toolchain), all gated off by default.
+    assert len(WORKFLOW_ORDER) == 25
     assert "adaptive_evaluation" in REGISTRY
     assert "risk_analysis" in REGISTRY
-    assert "web_exploit" in REGISTRY and "adversarial_redteam" in REGISTRY
+    assert {"web_exploit", "adversarial_redteam", "ai_toolchain"} <= set(REGISTRY)
     assert all(cls.responsibilities for cls in WORKFLOW_ORDER)
 
 

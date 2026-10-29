@@ -214,8 +214,13 @@ class WebReconAgent(BaseAgent):
         runs: list[dict] = []
         discovered: list[str] = []
 
+        from ..tools.spec import ToolCategory
         for sel in plan.selected:
             spec = sel.spec
+            # AI red-team tools (garak/promptfoo) are driven against model
+            # endpoints by ModelToolAgent, not here against the web surface.
+            if spec.category == ToolCategory.AI_REDTEAM:
+                continue
             if not sel.runnable or (allow and spec.name not in allow):
                 continue
 

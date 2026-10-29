@@ -19,7 +19,7 @@ audited choke point.
 
 ```
 objectives ─▶ PLAN ─▶ MAP ─▶ EVALUATE ─▶ ANALYZE ─▶ REMEDIATE ─▶ REPORT
-               ▲ 24 agents + orchestrator · adaptive loop · audited tools ▲
+               ▲ 25 agents + orchestrator · adaptive loop · audited tools ▲
 ```
 
 ---
@@ -319,7 +319,7 @@ Optional backends (all graceful-fallback): `pip install -e ".[graph]"` (LangGrap
 
 ## The agent collective
 
-Twenty-four specialized, collaborating agents over a shared blackboard state,
+Twenty-five specialized, collaborating agents over a shared blackboard state,
 coordinated by an orchestrator, each with declared responsibilities,
 inputs/outputs, confidence estimation, and stopping conditions. Two of them are
 offensive (active web-exploit confirmation and model red-teaming) and stay gated
@@ -420,7 +420,7 @@ aegis/
   benchmark/     offline accuracy benchmark (ground-truth fixtures + scoring)
   mutation/      transform library + reproducible engine
   evaluation/    metrics · behavioral/long-context/RAG analyzers · adaptive loop
-  agents/        24 agents + rule-based adjudication (incl. offensive, gated)
+  agents/        25 agents + rule-based adjudication (incl. offensive, gated)
   graph/         shared state · orchestrator + phase state machine (LangGraph-optional)
   explainability/behavioral (always) · internals (TransformerLens/SHAP/Captum, optional)
   reporting/     framework mappings · report model · MD/HTML/JSON renderers

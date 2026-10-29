@@ -39,7 +39,7 @@ AGENT_PHASE: dict[str, Phase] = {
     "web_recon": Phase.MAP, "attack_surface_mapping": Phase.MAP,
     "prompt_mutation": Phase.EVALUATE, "prompt_optimization": Phase.EVALUATE,
     "conversation": Phase.EVALUATE, "adaptive_evaluation": Phase.EVALUATE,
-    "adversarial_redteam": Phase.EVALUATE,
+    "adversarial_redteam": Phase.EVALUATE, "ai_toolchain": Phase.EVALUATE,
     "long_context": Phase.EVALUATE, "rag_analysis": Phase.EVALUATE,
     "information_verification": Phase.ANALYZE, "api_security": Phase.ANALYZE,
     "web_exploit": Phase.ANALYZE,
@@ -102,6 +102,7 @@ def _build_tooling(config: Config, bus: MessageBus):
         approval=approval,
         credential_testing=scan.credential_testing,
         exploitation=scan.exploitation,
+        env_passthrough=scan.tool_env,
     )
     return executor, ToolRegistry()
 

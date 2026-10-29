@@ -11,7 +11,11 @@ from urllib.parse import parse_qsl, urlparse
 
 import pytest
 
-from aegis.agents.offensive import AdversarialRedTeamAgent, WebExploitAgent
+from aegis.agents.offensive import (
+    AdversarialRedTeamAgent,
+    ModelToolAgent,
+    WebExploitAgent,
+)
 from aegis.agents.planning import Planner
 from aegis.core.authorization import AuthorizationScope, ScopeRule, localhost_scope
 from aegis.core.config import Config, LoopConfig, RedTeamConfig, ScanConfig, TargetConfig
@@ -257,6 +261,47 @@ def test_adversarial_probe_category_matches_attack(tmp_path):
         "SELECT DISTINCT category FROM probes").fetchall()}
     assert "prompt_injection" in cats                    # injection probes
     assert "data_exposure" in cats                       # system-prompt-leak probes
+
+
+def _model_tool_state(tmp_path, *, tools=("garak", "promptfoo"), execute=False,
+                      endpoint="https://llm.local/v1"):
+    scope = AuthorizationScope([ScopeRule(
+        label="llm-lab", hosts=["llm.local"], url_globs=["https://llm.local/*"],
+        authorization_ref="authorized model endpoint")])
+    cfg = Config(engagement="ai-tools", scope=scope, workdir=tmp_path,
+                 db_path=tmp_path / "ai.db",
+                 scan=ScanConfig(enabled=True, external_tools=True, offline=False,
+                                 execute_tools=execute, tools=list(tools),
+                                 auto_approve_active=True))
+    cfg.targets = [TargetConfig(id="llm", kind="api_llm", provider="mock",
+                                model="acme-bot", endpoint=endpoint)]
+    return build_state(cfg)
+
+
+def test_ai_toolchain_dry_run_drives_garak(tmp_path):
+    # execute_tools=False => executor dry-run: garak argv is built + audited, the
+    # model endpoint is NOT contacted, and promptfoo is skipped without a config.
+    state = _model_tool_state(tmp_path, execute=False)
+    assert ModelToolAgent().should_run(state)
+    state = ModelToolAgent().run(state)
+    runs = state.db.tool_runs(state.assessment_id)
+    garak = [r for r in runs if r["tool"] == "garak"]
+    assert garak and garak[0]["dry_run"] == 1 and "garak" in garak[0]["argv_json"]
+    assert not state.candidates                      # dry-run parses/raises nothing
+    obs = state.recon["llm"]["tool_observations"]
+    assert any(r["tool"] == "promptfoo"
+               and "prerequisite" in (r["refused_reason"] or "") for r in obs)
+    assert not state.errors
+
+
+def test_ai_toolchain_gated_without_model_endpoint(tmp_path):
+    state = _model_tool_state(tmp_path, endpoint=None)   # mock LLM, no endpoint
+    assert not ModelToolAgent().should_run(state)
+
+
+def test_ai_toolchain_gated_when_tools_not_listed(tmp_path):
+    state = _model_tool_state(tmp_path, tools=("httpx",))  # garak/promptfoo not allowed
+    assert not ModelToolAgent().should_run(state)
 
 
 def test_planner_lists_offensive_agents_only_when_enabled():

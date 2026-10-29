@@ -175,6 +175,122 @@ class WebExploitAgent(BaseAgent):
             evidence_ids=[ev.id]))
 
 
+class ModelToolAgent(BaseAgent):
+    name = "ai_toolchain"
+    responsibilities = ("Drive external AI red-team tools (garak, promptfoo) "
+                        "against authorized model endpoints through the scope-gated "
+                        "executor; raise findings from their results.")
+    inputs = ["targets"]
+    outputs = ["candidates", "recon"]
+
+    _TOOLS = ("garak", "promptfoo")
+
+    def should_run(self, state):
+        sc = state.config.scan
+        if not (sc.enabled and sc.external_tools and state.tool_executor):
+            return False
+        allow = set(sc.tools or [])
+        if allow and not (allow & set(self._TOOLS)):
+            return False
+        return any(t.kind in _MODEL_KINDS and t.metadata.get("endpoint")
+                   for t in state.targets)
+
+    def _run(self, state):
+        from ..tools.registry import TargetProfile
+        from ..tools.spec import RiskLevel, ToolInvocation
+
+        sc = state.config.scan
+        allow = set(sc.tools or [])
+        log = state.logger.bind(agent=self.name)
+        for t in state.targets:
+            if t.kind not in _MODEL_KINDS:
+                continue
+            endpoint = t.metadata.get("endpoint")
+            if not endpoint:                    # nothing to scope/contact (e.g. mock)
+                continue
+            scheme = endpoint.split("://", 1)[0] if "://" in endpoint else "http"
+            profile = TargetProfile(target=endpoint, kind=t.kind).add(
+                "llm", "ai", "model", scheme)
+            plan = state.tool_registry.select(profile, max_risk=RiskLevel.ACTIVE)
+            runs: list[dict] = []
+            for sel in plan.selected:
+                spec = sel.spec
+                if spec.name not in self._TOOLS:
+                    continue
+                if not sel.runnable or (allow and spec.name not in allow):
+                    continue
+                params = self._params(spec.name, t, sc)
+                if params is None:              # unmet prerequisite (e.g. no config)
+                    runs.append({"tool": spec.name, "ok": False, "dry_run": None,
+                                 "argv": [], "refused_reason": "prerequisite missing "
+                                 "(promptfoo needs scan.promptfoo_config)",
+                                 "observations": []})
+                    log.info("ai.tool", f"{spec.name} skipped", tool=spec.name,
+                             reason="unmet prerequisite")
+                    continue
+                inv = ToolInvocation(
+                    tool=spec.name, target=endpoint, params=params,
+                    engagement=state.config.engagement, requested_by=self.name,
+                    reason="authorized AI red-team of an in-scope model endpoint")
+                result = state.tool_executor.run(inv, spec)
+                if state.tool_executor.audit_log:
+                    try:
+                        state.db.save_tool_run(
+                            state.tool_executor.audit_log[-1].to_dict(),
+                            state.assessment_id)
+                    except Exception:
+                        pass
+                parsed = ([] if result.dry_run
+                          else [o.to_dict()
+                                for o in state.tool_executor.parse(spec, result)])
+                runs.append({
+                    "tool": spec.name, "target": endpoint, "ok": result.ok,
+                    "dry_run": result.dry_run, "argv": result.argv,
+                    "refused_reason": result.refused_reason, "observations": parsed})
+                for o in parsed:
+                    self._raise(state, t, spec.name, o)
+                log.info("ai.tool", f"{spec.name} finished", tool=spec.name,
+                         target=t.id, ok=result.ok, dry_run=result.dry_run,
+                         observations=len(parsed))
+            if runs:
+                state.recon.setdefault(t.id, {}).setdefault(
+                    "tool_observations", []).extend(runs)
+        return state
+
+    @staticmethod
+    def _params(name: str, t, sc) -> dict | None:
+        if name == "garak":
+            p = {"model_type": t.metadata.get("garak_model_type") or sc.garak_model_type,
+                 "model_name": t.metadata.get("model") or "",
+                 "timeout_s": max(sc.tool_timeout_s, 1800)}
+            if sc.garak_probes:
+                p["probes"] = sc.garak_probes
+            return p
+        if name == "promptfoo":
+            if not sc.promptfoo_config:
+                return None                     # can't reach the provider without it
+            return {"action": "redteam", "config": sc.promptfoo_config,
+                    "timeout_s": max(sc.tool_timeout_s, 1800)}
+        return {}
+
+    def _raise(self, state, t, tool: str, obs: dict) -> None:
+        if obs.get("kind") != "llm_vuln":
+            return
+        state.candidates.append(Finding(
+            title=f"LLM vulnerability ({tool}): {str(obs.get('value', ''))[:80]}",
+            category=FindingCategory.PROMPT_INJECTION, severity=Severity.HIGH,
+            mode=EvaluationMode.BLACK_BOX,
+            confidence=Confidence(
+                0.75, f"confirmed by an active AI red-team scanner ({tool})", 1),
+            target_id=t.id,
+            summary=f"{tool} flagged: {obs.get('value', '')}",
+            root_cause="Model/guardrail weakness surfaced by an adversarial probe "
+                       "set (jailbreak / prompt-injection / leakage).",
+            impact="Exploitable LLM weakness on an authorized model endpoint "
+                   "(OWASP LLM Top 10).",
+            evidence_ids=[]))
+
+
 class AdversarialRedTeamAgent(BaseAgent):
     name = "adversarial_redteam"
     responsibilities = ("Red-team authorized models with benign-canary prompt "

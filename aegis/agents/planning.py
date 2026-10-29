@@ -87,12 +87,17 @@ class Planner(BaseAgent):
         when the engagement enabled them, inserted at their real execution point
         (adversarial_redteam after adaptive_evaluation, web_exploit after
         api_security) to match ``WORKFLOW_ORDER``."""
+        sc = config.scan
+        ai_tools_on = (sc.enabled and sc.external_tools
+                       and (not sc.tools or {"garak", "promptfoo"} & set(sc.tools)))
         out: list[str] = []
         for name in base:
             out.append(name)
             if name == "adaptive_evaluation" and config.redteam.enabled:
                 out.append("adversarial_redteam")
-            if name == "api_security" and config.scan.active_exploit:
+            if name == "adaptive_evaluation" and ai_tools_on:
+                out.append("ai_toolchain")
+            if name == "api_security" and sc.active_exploit:
                 out.append("web_exploit")
         return out
 

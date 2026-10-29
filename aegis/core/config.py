@@ -121,6 +121,15 @@ class ScanConfig:
     sqli_level: int = 1                    # sqlmap 1-5 / ghauri 1-3
     sqli_risk: int = 1                     # sqlmap 1-3
     sqli_dbms: str | None = None           # optional back-end DBMS hint (speeds detection)
+    # AI red-team toolchain (garak / promptfoo) against authorized model endpoints.
+    garak_model_type: str = "openai"       # garak generator type for the endpoint
+    garak_probes: str | None = None        # optional garak probe set (default: all)
+    promptfoo_config: str | None = None     # promptfoo config path (required to run it)
+    # Env var NAMES to pass through to tool subprocesses (default: none). AI tools
+    # need the model's base URL/key to authenticate (e.g. OPENAI_API_BASE,
+    # OPENAI_API_KEY); list them here to forward them explicitly. The executor
+    # still drops every other secret from the child environment.
+    tool_env: list[str] = field(default_factory=list)
 
     def wordlist_candidates(self) -> tuple[str, ...]:
         return (
