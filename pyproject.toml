@@ -36,8 +36,16 @@ observability = ["opentelemetry-api", "opentelemetry-sdk", "mlflow", "arize-phoe
 graph = ["langgraph", "langchain-core"]
 # Model-internals explainability (white-box). Falls back to behavioral-only.
 explain = ["transformer-lens", "shap", "captum", "bertviz", "torch"]
-# Interop with mature OSS eval/red-team tools.
-integrations = ["promptfoo", "deepeval", "inspect-ai", "garak", "textattack", "adversarial-robustness-toolbox"]
+# Interop with mature OSS eval/red-team tools. All optional & runtime-detected.
+#   CLI tools: garak (pip), modelscan (pip), netron (pip); promptfoo is a Node
+#   CLI (`npm i -g promptfoo`) so it is not a pip dependency here.
+#   Libraries (in-process, via aegis.integrations): giskard, ragas,
+#   adversarial-robustness-toolbox (ART), cleverhans, deepteam.
+integrations = [
+    "garak", "modelscan", "netron",
+    "giskard", "ragas", "adversarial-robustness-toolbox", "cleverhans", "deepteam",
+    "deepeval", "inspect-ai", "textattack",
+]
 # Test + lint tooling.
 dev = ["pytest>=7", "pytest-cov", "ruff", "mypy"]
 

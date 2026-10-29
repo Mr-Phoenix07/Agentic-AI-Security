@@ -229,7 +229,9 @@ allowed, refused, and errored attempts alike. The default mode is **dry-run**.
 | zap-full | web-scan | intrusive | **ZAP active DAST** (paced; injection/XSS) |
 | semgrep, gitleaks, trivy | static/container | safe | local source / image posture |
 | sqlmap, ghauri | exploitation | dangerous | SQLi confirmation (gated) |
-| metasploit, hydra | exploitation/credential | dangerous | documentation-only contracts |
+| garak, promptfoo | ai-redteam | active | LLM vuln/jailbreak/injection scanning of an authorized model |
+| modelscan | static-analysis | safe | model-artifact supply-chain scan (unsafe pickle/deserialization) |
+| metasploit, hydra, netron | exploitation/credential/viewer | — | documentation-only contracts |
 
 ```bash
 aegis tools list
@@ -239,6 +241,40 @@ aegis tools select --kind rest_api --signals http,web,api,host --exploitation
 ZAP runs **headless and Docker-free** via a user-space wrapper
 ([`scripts/zap_scan.py`](scripts/zap_scan.py)); see **Installation** below. See
 [`docs/TOOL_INTEGRATION.md`](docs/TOOL_INTEGRATION.md) for the adapter contract.
+
+### AI / ML tool integrations
+
+AEGIS integrates best-of-breed AI/ML security tooling in two ways, matching how
+each tool actually runs:
+
+**CLI tools — through the same audited `ToolExecutor`** (scope + approval +
+`tool_runs` audit, no-shell argv). Install the binary and it becomes selectable:
+
+- **garak** (`pip install garak`) — LLM vulnerability scanner (jailbreak,
+  prompt-injection, toxicity, leakage) against an authorized model endpoint.
+- **promptfoo** (`npm i -g promptfoo`) — LLM red-team / eval harness.
+- **modelscan** (`pip install modelscan`) — scans a model artifact for unsafe
+  code / deserialization payloads **before** you load it (supply-chain).
+- **netron** (`pip install netron`) — model architecture viewer; documentation-only
+  (a manual GUI, not an automated scanner), paired with modelscan.
+
+**Python libraries — runtime-detected, graceful fallback** (via
+[`aegis.integrations`](aegis/integrations/)). These run in-process on a model or
+dataset **you supply**, so they are invoked explicitly, never auto-run. When a
+library is absent, the integration returns an install hint instead of failing:
+
+```bash
+aegis integrations            # list each library + whether it's installed
+pip install -e ".[integrations]"
+```
+
+| Library | Domain | Assesses |
+|---------|--------|----------|
+| giskard | llm | model+dataset vuln scan (bias, robustness, injection, harm) |
+| ragas | rag | faithfulness, answer relevancy, context precision/recall |
+| ART (adversarial-robustness-toolbox) | adversarial-ml | evasion/poisoning attacks on a classifier |
+| cleverhans | adversarial-ml | adversarial-example generation (FGSM/PGD) |
+| deepteam | llm | attack-vulnerability red-teaming on a model callback |
 
 ---
 
