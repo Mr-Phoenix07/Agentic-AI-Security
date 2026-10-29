@@ -45,6 +45,7 @@ from ..core.types import new_id, now_ts
 from .spec import (
     ParsedObservation,
     RiskLevel,
+    ToolCategory,
     ToolInvocation,
     ToolSpec,
     build_argv_safe,
@@ -315,7 +316,7 @@ class ToolExecutor:
         timeout = int(inv.opt("timeout_s", spec.default_timeout_s))
         start = time.time()
         try:
-            child_env = self._child_env(self.env_passthrough)
+            child_env = self._child_env(self._env_for(spec))
             proc = subprocess.run(  # noqa: S603 - argv list, shell=False, validated
                 argv,
                 shell=False,
@@ -366,6 +367,14 @@ class ToolExecutor:
     _ENV_KEEP = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE",
                  "TERM", "TMPDIR", "SHELL")
     _ENV_PREFIX = ("XDG_", "ZAP_", "NUCLEI_", "LC_")
+
+    def _env_for(self, spec: ToolSpec) -> tuple[str, ...]:
+        """Which configured env names to forward to THIS tool. The opt-in
+        passthrough reaches AI red-team tools only (they need the model's
+        base URL/key); every other tool runs with no forwarded secrets."""
+        if spec.category == ToolCategory.AI_REDTEAM:
+            return self.env_passthrough
+        return ()
 
     @classmethod
     def _child_env(cls, extra: tuple[str, ...] = ()) -> dict[str, str]:

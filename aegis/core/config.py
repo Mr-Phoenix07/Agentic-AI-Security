@@ -97,6 +97,10 @@ class ScanConfig:
     # Optional out-of-band collaborator host (one you control) for SSRF
     # confirmation, e.g. "oob.mytester.example". None => SSRF checks are skipped.
     oob_host: str | None = None
+    # Hard cap on the number of requests the built-in active-exploit probes send
+    # per target. Coverage is bounded by this; the agent logs a warning when it is
+    # hit so you can raise it for a thorough engagement.
+    exploit_max_checks: int = 400
     # recursive discovery (katana / gobuster / ffuf)
     recursive: bool = True                 # re-probe tool-discovered endpoints
     crawl_depth: int = 3                   # katana max crawl depth
@@ -125,10 +129,10 @@ class ScanConfig:
     garak_model_type: str = "openai"       # garak generator type for the endpoint
     garak_probes: str | None = None        # optional garak probe set (default: all)
     promptfoo_config: str | None = None     # promptfoo config path (required to run it)
-    # Env var NAMES to pass through to tool subprocesses (default: none). AI tools
-    # need the model's base URL/key to authenticate (e.g. OPENAI_API_BASE,
-    # OPENAI_API_KEY); list them here to forward them explicitly. The executor
-    # still drops every other secret from the child environment.
+    # Env var NAMES forwarded to the AI red-team tool subprocesses (garak /
+    # promptfoo) only — they need the model's base URL/key to authenticate (e.g.
+    # OPENAI_API_BASE, OPENAI_API_KEY). Every other tool, and every other env var,
+    # still runs with the curated secret-free environment.
     tool_env: list[str] = field(default_factory=list)
 
     def wordlist_candidates(self) -> tuple[str, ...]:

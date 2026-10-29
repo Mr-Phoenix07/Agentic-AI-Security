@@ -176,6 +176,7 @@ scan:
   enabled: true
   active_exploit: true        # unlocks the built-in confirmation probes
   oob_host: null              # set to a host you control to enable SSRF checks
+  exploit_max_checks: 400     # per-target request budget (raise for fuller coverage)
 ```
 
 Every request is scope-gated, redirects are never followed, and the payloads
