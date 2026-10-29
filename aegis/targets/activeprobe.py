@@ -108,6 +108,7 @@ class ActiveExploitProbe:
         timeout_s: float = 6.0,
         max_checks: int = 400,
         oob_host: str | None = None,
+        dry_run: bool = False,
         user_agent: str = "AEGIS/0.1 (authorized assessment)",
     ) -> None:
         self.scope = scope
@@ -115,6 +116,7 @@ class ActiveExploitProbe:
         self.timeout_s = timeout_s
         self.max_checks = max_checks
         self.oob_host = oob_host
+        self.dry_run = dry_run
         self.user_agent = user_agent
         self._opener = urllib.request.build_opener(_NoRedirect)
         self._checks = 0
@@ -139,6 +141,9 @@ class ActiveExploitProbe:
                         note="refused: offline policy (non-local host)")
             return None
         self._checks += 1
+        if self.dry_run:                                # plan only: never send
+            self._audit(url, allowed=True, status=None, note="dry-run: would send")
+            return None
         req = urllib.request.Request(url, method="GET",
                                      headers={"User-Agent": self.user_agent})
         try:

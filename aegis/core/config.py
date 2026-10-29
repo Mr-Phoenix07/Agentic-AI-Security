@@ -73,7 +73,13 @@ class ScanConfig:
     # optional external-tool layer
     external_tools: bool = False
     tools: list[str] = field(default_factory=lambda: ["httpx", "nuclei"])
-    execute_tools: bool = True             # False => dry-run the tools
+    execute_tools: bool = True             # False => dry-run the EXTERNAL tools only
+    # Global dry-run: plan everything and send ZERO traffic — the built-in
+    # crawler and active-exploit probes don't send, and external tools validate
+    # their argv without executing. Scope decisions and the full tool/probe plan
+    # are still produced and audited. This is the safe "dry-run first" switch for
+    # a live engagement (execute_tools alone leaves the built-in probes sending).
+    dry_run: bool = False
     # Default-off (fail-closed): the ACTIVE+ approval callback denies unless the
     # engagement explicitly opts in. Set this true to pre-authorize ACTIVE tools
     # (e.g. nuclei) to run unattended — this stands in for an interactive human

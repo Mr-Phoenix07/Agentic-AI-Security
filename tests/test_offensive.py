@@ -158,6 +158,25 @@ def test_full_pipeline_with_active_exploit(live_server, tmp_path):
     assert (tmp_path / state.assessment_id / "report.md").exists()
 
 
+def test_web_exploit_dry_run_sends_nothing(live_server, tmp_path):
+    """Global dry-run must send ZERO traffic: against the *vulnerable* server it
+    confirms nothing (nothing was sent), yet still records the planned requests."""
+    base = live_server(secure=False)
+    cfg = Config(
+        engagement="dry", scope=_scope_for(base), workdir=tmp_path,
+        db_path=tmp_path / "d.db",
+        scan=ScanConfig(enabled=True, active_exploit=True, offline=True,
+                        timeout_s=5, dry_run=True))
+    cfg.targets = [TargetConfig(id="app", kind="web_app", provider="mock",
+                                endpoint=base)]
+    state = build_state(cfg)
+    state = WebExploitAgent().run(state)
+    assert not state.candidates                          # nothing sent => nothing found
+    runs = state.db.tool_runs(state.assessment_id)
+    assert runs and all(r["dry_run"] and not r["executed"] for r in runs)
+    assert all(r["outcome"] == "allowed" for r in runs)  # planned, not executed
+
+
 def test_web_exploit_agent_gated_off_by_default(live_server, tmp_path):
     base = live_server(secure=False)
     cfg = Config(engagement="gated", scope=_scope_for(base), workdir=tmp_path,

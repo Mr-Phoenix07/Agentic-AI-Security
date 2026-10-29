@@ -1,0 +1,87 @@
+# AEGIS engagement — AUTHORIZED EXTERNAL (internet) target.
+#
+# Ready to run. It is DRY-RUN by default (`scan.dry_run: true`): the first run
+# sends ZERO traffic — it only validates the authorization scope and prints the
+# exact tool/probe plan (argv). Review that, then set `scan.dry_run: false` to go
+# live. Reaching an external host also requires `scan.offline: false` (already set).
+#
+#   # 1. no-traffic authorization check
+#   aegis scope-check examples/engagement-external.yaml --url https://app.client.example/
+#   aegis scope-check examples/engagement-external.yaml --url https://evil.example/
+#
+#   # 2. dry-run the whole pipeline (still ZERO traffic while dry_run: true)
+#   aegis run examples/engagement-external.yaml
+#
+#   # 3. go live: set scan.dry_run: false below, then re-run
+#   aegis run examples/engagement-external.yaml --fail-on high
+#
+# ⚠️  Only the hosts/URLs/models under `authorization` are ever contacted. An
+# out-of-scope target is refused and recorded. Keep the signed SoW/ticket id in
+# authorization_ref — it is stamped into every audited action (tool_runs).
+
+engagement: "ACME-external-2026Q4"            # <-- your engagement name
+workdir: "./aegis_runs"
+log_level: "INFO"
+
+authorization:
+  dry_run: false                              # scope ENFORCED (fail-closed)
+  rules:
+    - label: "acme-external-scope"
+      # <-- REPLACE with ONLY the hosts/URLs the SoW authorizes.
+      hosts: ["app.client.example", "api.client.example"]
+      url_globs:
+        - "https://app.client.example/*"
+        - "https://api.client.example/*"
+      # Optional engagement window (UNIX time) — uncomment to time-box:
+      # not_before: 1767225600
+      # not_after:  1769904000
+      max_requests: 2000000
+      authorization_ref: "SoW-2026-ACME-042 (signed 2026-10-01)"   # <-- your SoW/ticket id
+
+scan:
+  enabled: true
+  active: true
+  offline: false              # REQUIRED to contact a non-loopback (external) host
+  dry_run: true               # ⟵ SAFE DEFAULT: plan + validate, send nothing. Flip to false to go live.
+  max_pages: 300
+  timeout_s: 8
+  tool_timeout_s: 300
+
+  external_tools: true
+  tools: ["httpx", "katana", "ffuf", "arjun", "nuclei", "nikto", "zap",
+          "zap-full", "sqlmap", "ghauri"]
+  execute_tools: true         # (overridden while dry_run: true)
+  auto_approve_active: true   # pre-authorize ACTIVE/INTRUSIVE tools for THIS engagement
+
+  # exploitation (confirmation-grade; no exfiltration/takeover defaults)
+  exploitation: true
+  credential_testing: false
+  max_risk: "dangerous"
+
+  # built-in active web-exploit confirmation (reflected XSS / traversal / open redirect)
+  active_exploit: true
+  oob_host: null              # set to a collaborator you control to enable SSRF checks
+
+  recursive: true
+  crawl_depth: 2
+  rate_limit: 80              # be a polite guest on a live external host
+  wordlist: null
+
+  sqli_level: 2
+  sqli_risk: 1
+  injection_targets:
+    - url: "https://api.client.example/products?q=test"
+    - url: "https://api.client.example/login"
+      data: '{"email":"tester@acme.example","password":"x"}'
+
+# Adversarial model red-team (include only if an LLM endpoint is in scope).
+redteam:
+  enabled: false
+  trials: 5
+
+targets:
+  - id: "acme-external-web"
+    kind: "web_app"
+    provider: "mock"          # non-web agents stay offline on the mock
+    endpoint: "https://app.client.example"
+    mode: "black_box"

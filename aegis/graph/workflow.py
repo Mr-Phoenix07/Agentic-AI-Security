@@ -98,7 +98,7 @@ def _build_tooling(config: Config, bus: MessageBus):
         scope=config.scope,
         bus=bus,
         offline=scan.offline,
-        dry_run=not scan.execute_tools,
+        dry_run=(not scan.execute_tools) or scan.dry_run,
         approval=approval,
         credential_testing=scan.credential_testing,
         exploitation=scan.exploitation,

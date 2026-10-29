@@ -81,7 +81,8 @@ class WebExploitAgent(BaseAgent):
             urls = self._candidate_urls(state, t, base)
             probe = ActiveExploitProbe(
                 state.config.scope, offline=sc.offline, timeout_s=sc.timeout_s,
-                max_checks=max(50, sc.max_pages * 4), oob_host=sc.oob_host)
+                max_checks=max(50, sc.max_pages * 4), oob_host=sc.oob_host,
+                dry_run=sc.dry_run)
             hits = probe.assess(urls, include_ssrf=bool(sc.oob_host))
             for h in hits:
                 self._raise(state, t, h)
@@ -97,19 +98,27 @@ class WebExploitAgent(BaseAgent):
         rows = []
         for e in probe.audit_log:
             status = e.get("status")
-            executed = e["allowed"] and status is not None
-            outcome = ("executed" if executed
-                       else "refused" if not e["allowed"] else "errored")
+            note = e.get("note", "")
+            is_dry = note.startswith("dry-run")
+            executed = e["allowed"] and status is not None and not is_dry
+            if is_dry:
+                outcome = "allowed"                      # validated, not sent
+            elif not e["allowed"]:
+                outcome = "refused"
+            elif executed:
+                outcome = "executed"
+            else:
+                outcome = "errored"
             rows.append({
                 "id": new_id("trun"), "tool": "web-exploit", "binary": "(builtin)",
                 "target": e["url"], "engagement": state.config.engagement,
                 "requested_by": self.name,
                 "reason": "active web-exploit confirmation probe",
                 "argv": [e.get("method", "GET"), e["url"]],
-                "scope_allowed": bool(e["allowed"]), "scope_reason": e.get("note", ""),
-                "risk_level": "active", "approved": True, "dry_run": False,
+                "scope_allowed": bool(e["allowed"]), "scope_reason": note,
+                "risk_level": "active", "approved": True, "dry_run": is_dry,
                 "executed": bool(executed), "exit_code": status, "duration_s": 0.0,
-                "outcome": outcome, "detail": e.get("note", ""), "created_at": now_ts()})
+                "outcome": outcome, "detail": note, "created_at": now_ts()})
         if rows:
             try:
                 state.db.save_tool_runs(rows, state.assessment_id)
