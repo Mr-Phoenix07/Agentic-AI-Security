@@ -294,6 +294,34 @@ def test_ai_toolchain_dry_run_drives_garak(tmp_path):
     assert not state.errors
 
 
+def test_ai_toolchain_finding_carries_evidence(tmp_path):
+    state = _model_tool_state(tmp_path)
+    t = state.targets[0]
+    ModelToolAgent()._raise(state, t, "garak",
+                            {"kind": "llm_vuln", "value": "jailbreak: DAN"})
+    assert state.candidates and state.candidates[0].evidence_ids
+    ev_id = state.candidates[0].evidence_ids[0]
+    row = state.db.conn.execute(
+        "SELECT id FROM evidence WHERE id=?", (ev_id,)).fetchone()
+    assert row is not None                               # evidence persisted
+
+
+def test_exploit_max_checks_caps_requests(live_server, tmp_path):
+    base = live_server(secure=False)
+    cfg = Config(
+        engagement="budget", scope=_scope_for(base), workdir=tmp_path,
+        db_path=tmp_path / "b.db",
+        scan=ScanConfig(enabled=True, active_exploit=True, offline=True,
+                        timeout_s=5, exploit_max_checks=5))
+    cfg.targets = [TargetConfig(id="app", kind="web_app", provider="mock",
+                                endpoint=base)]
+    state = build_state(cfg)
+    state = WebExploitAgent().run(state)
+    executed = [r for r in state.db.tool_runs(state.assessment_id)
+                if r["tool"] == "web-exploit" and r["executed"]]
+    assert 0 < len(executed) <= 5                        # budget honored
+
+
 def test_ai_toolchain_gated_without_model_endpoint(tmp_path):
     state = _model_tool_state(tmp_path, endpoint=None)   # mock LLM, no endpoint
     assert not ModelToolAgent().should_run(state)

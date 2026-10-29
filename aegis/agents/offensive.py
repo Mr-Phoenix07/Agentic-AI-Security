@@ -79,10 +79,10 @@ class WebExploitAgent(BaseAgent):
             if not base:
                 continue
             urls = self._candidate_urls(state, t, base)
+            budget = max(1, sc.exploit_max_checks)
             probe = ActiveExploitProbe(
                 state.config.scope, offline=sc.offline, timeout_s=sc.timeout_s,
-                max_checks=max(50, sc.max_pages * 4), oob_host=sc.oob_host,
-                dry_run=sc.dry_run)
+                max_checks=budget, oob_host=sc.oob_host, dry_run=sc.dry_run)
             hits = probe.assess(urls, include_ssrf=bool(sc.oob_host))
             for h in hits:
                 self._raise(state, t, h)
@@ -90,6 +90,10 @@ class WebExploitAgent(BaseAgent):
             log.info("web.exploit", "active confirmation complete", target=t.id,
                      urls=len(urls), hits=len(hits), checks=probe._checks,
                      audited=len(probe.audit_log))
+            if probe._checks >= budget and not sc.dry_run:
+                log.info("web.exploit", "check budget exhausted — coverage capped",
+                         target=t.id, budget=budget,
+                         hint="raise scan.exploit_max_checks for fuller coverage")
         return state
 
     def _persist_audit(self, state, probe) -> None:
@@ -276,6 +280,14 @@ class ModelToolAgent(BaseAgent):
     def _raise(self, state, t, tool: str, obs: dict) -> None:
         if obs.get("kind") != "llm_vuln":
             return
+        ev = Evidence(
+            kind="tool_output", summary=f"{tool} finding on {t.id}",
+            payload={"tool": tool, "observation": obs},
+            target_id=t.id, reproduction={"tool": tool, "endpoint": t.metadata.get("endpoint")})
+        try:
+            state.db.save_evidence(state.assessment_id, None, ev)
+        except Exception:
+            pass
         state.candidates.append(Finding(
             title=f"LLM vulnerability ({tool}): {str(obs.get('value', ''))[:80]}",
             category=FindingCategory.PROMPT_INJECTION, severity=Severity.HIGH,
@@ -288,7 +300,7 @@ class ModelToolAgent(BaseAgent):
                        "set (jailbreak / prompt-injection / leakage).",
             impact="Exploitable LLM weakness on an authorized model endpoint "
                    "(OWASP LLM Top 10).",
-            evidence_ids=[]))
+            evidence_ids=[ev.id]))
 
 
 class AdversarialRedTeamAgent(BaseAgent):

@@ -34,9 +34,10 @@ runtime-detected (graceful fallback when absent), and are invoked explicitly wit
 a handle the operator supplies (`aegis integrations` lists availability).
 
 AI tools often need the model's base URL/key, which the curated child environment
-strips. The executor forwards only the env-var names an engagement lists in
-`scan.tool_env` (e.g. `OPENAI_API_BASE`, `OPENAI_API_KEY`); every other secret
-stays dropped.
+strips. The executor forwards the env-var names an engagement lists in
+`scan.tool_env` (e.g. `OPENAI_API_BASE`, `OPENAI_API_KEY`) **only to the AI
+red-team tools** (garak/promptfoo); every other tool, and every other env var,
+runs with the secret-free environment.
 
 ## The adapter contract (`ToolSpec`)
 

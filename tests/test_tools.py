@@ -276,6 +276,16 @@ def test_child_env_excludes_secrets(monkeypatch):
     assert "GITHUB_TOKEN" not in env
 
 
+def test_env_passthrough_scoped_to_ai_tools(registry, web_scope):
+    # Forwarded env names reach AI red-team tools only; every other tool runs
+    # with the curated secret-free environment.
+    ex = ToolExecutor(web_scope, dry_run=True, env_passthrough=["OPENAI_API_KEY"])
+    assert ex._env_for(registry.get("garak")) == ("OPENAI_API_KEY",)      # ai_redteam
+    assert ex._env_for(registry.get("promptfoo")) == ("OPENAI_API_KEY",)  # ai_redteam
+    assert ex._env_for(registry.get("httpx")) == ()                       # fingerprint
+    assert ex._env_for(registry.get("nuclei")) == ()                      # web_scan
+
+
 def test_audit_record_persists_to_db(tmp_path, registry, web_scope):
     from aegis.storage.db import Database
 

@@ -87,9 +87,9 @@ redteam:
 #   scan.garak_model_type: "openai"      # garak generator for the endpoint
 #   scan.garak_probes: null              # e.g. "promptinject,dan" (default: all)
 #   scan.promptfoo_config: null          # path to a promptfoo config (required to run it)
-#   scan.tool_env: ["OPENAI_API_BASE", "OPENAI_API_KEY"]  # forward ONLY these to tools
-# tool_env explicitly forwards the model's base URL / key to the tool subprocess;
-# every other secret stays dropped from the child environment.
+#   scan.tool_env: ["OPENAI_API_BASE", "OPENAI_API_KEY"]  # forwarded to garak/promptfoo only
+# tool_env forwards the named model base URL / key to the AI red-team tools ONLY;
+# every other tool, and every other secret, runs with the curated environment.
 
 targets:
   - id: "acme-external-web"
