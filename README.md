@@ -19,7 +19,7 @@ audited choke point.
 
 ```
 objectives ─▶ PLAN ─▶ MAP ─▶ EVALUATE ─▶ ANALYZE ─▶ REMEDIATE ─▶ REPORT
-               ▲ 22 agents + orchestrator · adaptive loop · audited tools ▲
+               ▲ 25 agents + orchestrator · adaptive loop · audited tools ▲
 ```
 
 ---
@@ -62,6 +62,7 @@ aegis demo                          # or:  python examples/run_demo.py
 # 2. Inspect the collective, tools, and methodologies
 aegis agents
 aegis tools list
+aegis integrations           # optional AI/ML libraries + whether each is installed
 aegis methodology webapp
 
 # 3. Offline accuracy benchmark (precision / recall / F1 on ground-truth fixtures)
@@ -74,7 +75,7 @@ aegis run examples/engagement-zap-dast.yaml --fail-on high
 Run the tests (fully offline):
 
 ```bash
-pytest -q            # 93 tests
+pytest -q            # 122 tests
 ```
 
 ---
@@ -93,6 +94,7 @@ tool's argv and the scope decision without sending anything).
 | Recursive discovery | [`engagement-recursive.yaml`](examples/engagement-recursive.yaml) | katana/gobuster/ffuf discovery → recursive re-probe |
 | **Live LLM (vLLM / Ollama)** | [`engagement-vllm-live.yaml`](examples/engagement-vllm-live.yaml) | AI red-team the **real model** via the `vllm` provider + httpx/nuclei on the endpoint |
 | **Remote / internet target** | [`engagement-remote.yaml`](examples/engagement-remote.yaml) | `offline: false`; assess an **authorized** remote host |
+| **Client pentest (web + API + model)** | [`engagement-client-pentest.yaml`](examples/engagement-client-pentest.yaml) | written-scope template: external toolchain + built-in **active-exploit confirmation** + **model red-team**, all gated to the SoW scope |
 
 ### Local web application
 
@@ -163,6 +165,43 @@ scan:
 Defaults are **detection/confirmation only** — no data-exfiltration (`--dump`)
 or OS-takeover (`--os-shell`) flags.
 
+### Built-in active web-exploit confirmation (no external binary)
+
+The `web_exploit` agent confirms common web bugs itself — **reflected XSS, path
+traversal / LFI, open redirect**, and (with a collaborator) **SSRF** — using
+unique *benign* canaries. It is fail-closed and opt-in:
+
+```yaml
+scan:
+  enabled: true
+  active_exploit: true        # unlocks the built-in confirmation probes
+  oob_host: null              # set to a host you control to enable SSRF checks
+```
+
+Every request is scope-gated, redirects are never followed, and the payloads
+prove a bug exists without weaponizing it (reflected breakout characters, a
+read of a benign system file, an unroutable `.invalid` redirect marker) — no
+exfiltration, state change, or code execution. A correctly-encoding/validating
+app is **not** flagged.
+
+### Adversarial model red-team (authorized LLM testing)
+
+The `adversarial_redteam` agent tests whether an authorized model is susceptible
+to **prompt injection** (instruction-in-data override, OWASP LLM01),
+**system-prompt / secret leakage** (LLM07), and **RAG query injection**. Success
+is measured by a unique benign canary echoing back — never by generating harmful
+content — so a secure model simply reports no susceptibility.
+
+```yaml
+redteam:
+  enabled: true
+  trials: 5                   # repeats per attack (gives a rate + confidence)
+```
+
+Both agents stay gated **off** by default; findings carry reproduction-grade
+evidence and flow through the normal validation → risk → report pipeline with
+OWASP/MITRE/NIST mappings and mitigations attached.
+
 ---
 
 ## Controlled external-tool integration
@@ -191,7 +230,9 @@ allowed, refused, and errored attempts alike. The default mode is **dry-run**.
 | zap-full | web-scan | intrusive | **ZAP active DAST** (paced; injection/XSS) |
 | semgrep, gitleaks, trivy | static/container | safe | local source / image posture |
 | sqlmap, ghauri | exploitation | dangerous | SQLi confirmation (gated) |
-| metasploit, hydra | exploitation/credential | dangerous | documentation-only contracts |
+| garak, promptfoo | ai-redteam | active | LLM vuln/jailbreak/injection scanning of an authorized model |
+| modelscan | static-analysis | safe | model-artifact supply-chain scan (unsafe pickle/deserialization) |
+| metasploit, hydra, netron | exploitation/credential/viewer | — | documentation-only contracts |
 
 ```bash
 aegis tools list
@@ -201,6 +242,40 @@ aegis tools select --kind rest_api --signals http,web,api,host --exploitation
 ZAP runs **headless and Docker-free** via a user-space wrapper
 ([`scripts/zap_scan.py`](scripts/zap_scan.py)); see **Installation** below. See
 [`docs/TOOL_INTEGRATION.md`](docs/TOOL_INTEGRATION.md) for the adapter contract.
+
+### AI / ML tool integrations
+
+AEGIS integrates best-of-breed AI/ML security tooling in two ways, matching how
+each tool actually runs:
+
+**CLI tools — through the same audited `ToolExecutor`** (scope + approval +
+`tool_runs` audit, no-shell argv). Install the binary and it becomes selectable:
+
+- **garak** (`pip install garak`) — LLM vulnerability scanner (jailbreak,
+  prompt-injection, toxicity, leakage) against an authorized model endpoint.
+- **promptfoo** (`npm i -g promptfoo`) — LLM red-team / eval harness.
+- **modelscan** (`pip install modelscan`) — scans a model artifact for unsafe
+  code / deserialization payloads **before** you load it (supply-chain).
+- **netron** (`pip install netron`) — model architecture viewer; documentation-only
+  (a manual GUI, not an automated scanner), paired with modelscan.
+
+**Python libraries — runtime-detected, graceful fallback** (via
+[`aegis.integrations`](aegis/integrations/)). These run in-process on a model or
+dataset **you supply**, so they are invoked explicitly, never auto-run. When a
+library is absent, the integration returns an install hint instead of failing:
+
+```bash
+aegis integrations            # list each library + whether it's installed
+pip install -e ".[integrations]"
+```
+
+| Library | Domain | Assesses |
+|---------|--------|----------|
+| giskard | llm | model+dataset vuln scan (bias, robustness, injection, harm) |
+| ragas | rag | faithfulness, answer relevancy, context precision/recall |
+| ART (adversarial-robustness-toolbox) | adversarial-ml | evasion/poisoning attacks on a classifier |
+| cleverhans | adversarial-ml | adversarial-example generation (FGSM/PGD) |
+| deepteam | llm | attack-vulnerability red-teaming on a model callback |
 
 ---
 
@@ -245,9 +320,11 @@ Optional backends (all graceful-fallback): `pip install -e ".[graph]"` (LangGrap
 
 ## The agent collective
 
-Twenty-two specialized, collaborating agents over a shared blackboard state,
+Twenty-five specialized, collaborating agents over a shared blackboard state,
 coordinated by an orchestrator, each with declared responsibilities,
-inputs/outputs, confidence estimation, and stopping conditions.
+inputs/outputs, confidence estimation, and stopping conditions. Two of them are
+offensive (active web-exploit confirmation and model red-teaming) and stay gated
+off unless the engagement explicitly enables them.
 
 ```mermaid
 flowchart LR
@@ -344,7 +421,7 @@ aegis/
   benchmark/     offline accuracy benchmark (ground-truth fixtures + scoring)
   mutation/      transform library + reproducible engine
   evaluation/    metrics · behavioral/long-context/RAG analyzers · adaptive loop
-  agents/        22 agents + rule-based adjudication
+  agents/        25 agents + rule-based adjudication (incl. offensive, gated)
   graph/         shared state · orchestrator + phase state machine (LangGraph-optional)
   explainability/behavioral (always) · internals (TransformerLens/SHAP/Captum, optional)
   reporting/     framework mappings · report model · MD/HTML/JSON renderers

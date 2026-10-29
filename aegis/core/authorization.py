@@ -176,6 +176,10 @@ class AuthorizationScope:
     def _require(self, rule: ScopeRule | None, miss_reason: str) -> ScopeDecision:
         if rule is None:
             decision = ScopeDecision(False, miss_reason)
+        elif self.dry_run:
+            # Dry-run validates scope without "spending" anything, so a dry run
+            # never trips (or even advances) a rule's rate/volume ceiling.
+            decision = ScopeDecision(True, self._authz_reason(rule), rule.label)
         else:
             over = self._record_and_check_rate(rule)
             decision = (ScopeDecision(False, over, rule.label) if over

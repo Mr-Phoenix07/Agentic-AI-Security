@@ -46,6 +46,19 @@ class ReportBuilder:
         "confidence_calibration", "long_context", "rag_grounding", "rag_retrieval",
         "tool_use", "agent_autonomy", "mcp_exposure", "cross_domain",
     }
+    # Target kinds that unambiguously place a finding in the AI / web section.
+    # (data_exposure, api_security, … are shared categories, so the finding's
+    # target kind decides first; ai_gateway/hybrid fall back to the category.)
+    _AI_KINDS = {"local_llm", "api_llm", "rag", "multi_agent", "copilot", "mcp"}
+    _WEB_KINDS = {"web_app", "rest_api", "graphql_api"}
+
+    def _is_ai_finding(self, finding: dict, kind_by_target: dict) -> bool:
+        kind = kind_by_target.get(finding.get("target_id"))
+        if kind in self._AI_KINDS:
+            return True
+        if kind in self._WEB_KINDS:
+            return False
+        return finding.get("category") in self.AI_CATEGORIES
 
     def build(
         self,
@@ -62,8 +75,9 @@ class ReportBuilder:
         findings = sorted(findings,
                           key=lambda f: severity_weight(f.get("severity", "info")),
                           reverse=True)
-        ai = [f for f in findings if f.get("category") in self.AI_CATEGORIES]
-        web = [f for f in findings if f.get("category") not in self.AI_CATEGORIES]
+        kind_by_target = {t.get("id"): (t.get("kind") or "") for t in targets}
+        ai = [f for f in findings if self._is_ai_finding(f, kind_by_target)]
+        web = [f for f in findings if not self._is_ai_finding(f, kind_by_target)]
 
         counts = {s.value: 0 for s in Severity}
         for f in findings:

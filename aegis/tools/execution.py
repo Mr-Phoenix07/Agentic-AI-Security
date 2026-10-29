@@ -167,6 +167,7 @@ class ToolExecutor:
         credential_testing: bool = False,
         exploitation: bool = False,
         allow_binaries: set[str] | None = None,
+        env_passthrough: list[str] | None = None,
     ) -> None:
         self.scope = scope
         self.bus = bus
@@ -176,6 +177,9 @@ class ToolExecutor:
         self.credential_testing = credential_testing
         self.exploitation = exploitation
         self.allow_binaries = allow_binaries
+        # Extra env var NAMES to forward to tool subprocesses (opt-in). AI tools
+        # need the model base URL/key; everything else stays dropped.
+        self.env_passthrough = tuple(env_passthrough or ())
         self.audit_log: list[ToolRunRecord] = []
 
     # -- audit -------------------------------------------------------------- #
@@ -311,7 +315,7 @@ class ToolExecutor:
         timeout = int(inv.opt("timeout_s", spec.default_timeout_s))
         start = time.time()
         try:
-            child_env = self._child_env()
+            child_env = self._child_env(self.env_passthrough)
             proc = subprocess.run(  # noqa: S603 - argv list, shell=False, validated
                 argv,
                 shell=False,
@@ -364,12 +368,15 @@ class ToolExecutor:
     _ENV_PREFIX = ("XDG_", "ZAP_", "NUCLEI_", "LC_")
 
     @classmethod
-    def _child_env(cls) -> dict[str, str]:
+    def _child_env(cls, extra: tuple[str, ...] = ()) -> dict[str, str]:
         src = os.environ
         env = {k: src[k] for k in cls._ENV_KEEP if k in src}
         for k, v in src.items():
             if any(k.startswith(p) for p in cls._ENV_PREFIX):
                 env[k] = v
+        for name in extra:                     # explicit opt-in passthrough (AI tools)
+            if name in src:
+                env[name] = src[name]
         env.setdefault("PATH", src.get("PATH", ""))
         return env
 

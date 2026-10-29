@@ -1,9 +1,12 @@
 """The AEGIS agent collective.
 
-Twenty-two specialized, collaborating agents, coordinated by the Orchestrator
+Twenty-five specialized, collaborating agents, coordinated by the Orchestrator
 (see :mod:`aegis.graph.workflow`). ``WORKFLOW_ORDER`` is the canonical
 dependency-respecting execution sequence; each agent's ``should_run`` gates it
-per target kind, so the same order serves LLM, RAG, web, API, and MCP assessments.
+per target kind and per engagement switch, so the same order serves LLM, RAG,
+web, API, and MCP assessments (the offensive agents stay gated off unless the
+engagement explicitly enables active exploitation / model red-teaming / the AI
+toolchain).
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from .mapping import (
     CapabilityMappingAgent,
     WebReconAgent,
 )
+from .offensive import AdversarialRedTeamAgent, ModelToolAgent, WebExploitAgent
 from .planning import Planner, TaskScheduler
 from .reporting_agents import (
     DashboardAgent,
@@ -51,10 +55,13 @@ WORKFLOW_ORDER: list[type[BaseAgent]] = [
     PromptOptimizationAgent,
     ConversationAgent,
     AdaptiveEvaluationAgent,
+    AdversarialRedTeamAgent,
+    ModelToolAgent,
     LongContextAgent,
     RAGAnalysisAgent,
     InformationVerificationAgent,
     APISecurityAgent,
+    WebExploitAgent,
     VulnerabilityAssessmentAgent,
     ControlledValidationAgent,
     EvidenceCollectionAgent,

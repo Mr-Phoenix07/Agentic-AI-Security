@@ -1,6 +1,6 @@
 """Orchestrator & workflow graph.
 
-The Orchestrator drives the twenty-three-agent collective over a single shared
+The Orchestrator drives the twenty-five-agent collective over a single shared
 :class:`~aegis.graph.state.AssessmentState`. The reference implementation is a
 deterministic, dependency-free sequential state machine (phases: PLAN → MAP →
 EVALUATE → ANALYZE → REMEDIATE → REPORT → DONE). When ``langgraph`` is installed,
@@ -39,8 +39,10 @@ AGENT_PHASE: dict[str, Phase] = {
     "web_recon": Phase.MAP, "attack_surface_mapping": Phase.MAP,
     "prompt_mutation": Phase.EVALUATE, "prompt_optimization": Phase.EVALUATE,
     "conversation": Phase.EVALUATE, "adaptive_evaluation": Phase.EVALUATE,
+    "adversarial_redteam": Phase.EVALUATE, "ai_toolchain": Phase.EVALUATE,
     "long_context": Phase.EVALUATE, "rag_analysis": Phase.EVALUATE,
     "information_verification": Phase.ANALYZE, "api_security": Phase.ANALYZE,
+    "web_exploit": Phase.ANALYZE,
     "vulnerability_assessment": Phase.ANALYZE, "controlled_validation": Phase.ANALYZE,
     "evidence_collection": Phase.ANALYZE, "risk_analysis": Phase.ANALYZE,
     "explainability": Phase.REMEDIATE, "mitigation_recommendation": Phase.REMEDIATE,
@@ -96,10 +98,11 @@ def _build_tooling(config: Config, bus: MessageBus):
         scope=config.scope,
         bus=bus,
         offline=scan.offline,
-        dry_run=not scan.execute_tools,
+        dry_run=(not scan.execute_tools) or scan.dry_run,
         approval=approval,
         credential_testing=scan.credential_testing,
         exploitation=scan.exploitation,
+        env_passthrough=scan.tool_env,
     )
     return executor, ToolRegistry()
 

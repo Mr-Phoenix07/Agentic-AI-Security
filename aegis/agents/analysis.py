@@ -321,11 +321,17 @@ class ControlledValidationAgent(BaseAgent):
     def _run(self, state):
         for c in state.candidates:
             # Behavioural candidates are already evidence-backed & reproducible; we
-            # record the confirmation and its method. Surface candidates are
-            # confirmed against the declared inventory (config review) — we do not
-            # perform intrusive exploitation.
-            method = ("re-run of failing probe family (reproducible)"
-                      if c.observation_ids else "declared-configuration review")
+            # record the confirmation and its method. Candidates that an active,
+            # authorized probe already confirmed (web-exploit / adversarial agents)
+            # carry "confirm" in their rationale. Remaining surface candidates are
+            # confirmed against the declared inventory (config review).
+            rationale = (c.confidence.rationale or "").lower()
+            if c.observation_ids:
+                method = "re-run of failing probe family (reproducible)"
+            elif "confirm" in rationale:
+                method = "active, authorized confirmation probe"
+            else:
+                method = "declared-configuration review"
             c.confidence = Confidence(
                 value=c.confidence.value,
                 rationale=f"validated via {method}; " + c.confidence.rationale,

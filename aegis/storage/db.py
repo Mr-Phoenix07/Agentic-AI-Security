@@ -129,12 +129,7 @@ class Database:
             "VALUES(?,?,?,?,?,?)",
             (new_id("metric"), aid, target_id, name, float(value), now_ts()))
 
-    def save_tool_run(self, rec: dict, aid: str | None = None) -> None:
-        """Persist an immutable tool-run audit record (from ToolRunRecord.to_dict()).
-
-        Append-only: the platform never updates or deletes these rows, so the
-        audit trail of what was executed (or refused) stays trustworthy.
-        """
+    def _insert_tool_run(self, rec: dict, aid: str | None) -> None:
         self.conn.execute(
             "INSERT INTO tool_runs(id,assessment_id,tool,binary,target,engagement,"
             "requested_by,reason,argv_json,scope_allowed,scope_reason,risk_level,"
@@ -148,6 +143,26 @@ class Database:
              int(bool(rec["executed"])), rec.get("exit_code"),
              rec.get("duration_s"), rec["outcome"], rec.get("detail"),
              rec["created_at"]))
+
+    def save_tool_run(self, rec: dict, aid: str | None = None) -> None:
+        """Persist an immutable tool-run audit record (from ToolRunRecord.to_dict()).
+
+        Append-only: the platform never updates or deletes these rows, so the
+        audit trail of what was executed (or refused) stays trustworthy.
+        """
+        self._insert_tool_run(rec, aid)
+        self.conn.commit()
+
+    def save_tool_runs(self, records: list[dict], aid: str | None = None) -> None:
+        """Persist many tool-run audit records in one transaction (append-only).
+
+        Used by the built-in active probes, which emit one audit record per HTTP
+        request — including authorized requests that found nothing and requests
+        refused by scope — so the engagement has a complete per-request trail
+        alongside the external-tool runs.
+        """
+        for rec in records:
+            self._insert_tool_run(rec, aid)
         self.conn.commit()
 
     def tool_runs(self, aid: str | None = None) -> list[dict]:

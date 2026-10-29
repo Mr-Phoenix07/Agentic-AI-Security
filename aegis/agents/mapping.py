@@ -105,14 +105,18 @@ class WebReconAgent(BaseAgent):
                 # 1) baseline live crawl FIRST — capture security headers and
                 #    exposed/sensitive paths while the target is still healthy,
                 #    before any heavy external tool can load or destabilise it.
-                live = self._live_crawl(state, t, None)
+                #    In global dry-run the built-in crawler sends nothing; the
+                #    external-tool plan (argv) is still produced via the executor's
+                #    own dry-run, so the full plan is visible with zero traffic.
+                live = ({"dry_run": True, "would_probe": t.metadata.get("endpoint")}
+                        if sc.dry_run else self._live_crawl(state, t, None))
                 discovered: list[str] = []
                 if sc.external_tools and state.tool_executor:
                     runs, discovered = self._external_tools(state, t)
                     entry["tool_observations"] = runs
                     # 2) recursive re-probe of tool-discovered endpoints, merged
                     #    into the baseline (catches deep sensitive files/listings).
-                    if discovered and sc.recursive:
+                    if discovered and sc.recursive and not sc.dry_run:
                         live = self._merge_live(
                             live, self._live_crawl(state, t, discovered))
                         entry["discovered_endpoints"] = discovered[: sc.max_discovered]
@@ -210,8 +214,13 @@ class WebReconAgent(BaseAgent):
         runs: list[dict] = []
         discovered: list[str] = []
 
+        from ..tools.spec import ToolCategory
         for sel in plan.selected:
             spec = sel.spec
+            # AI red-team tools (garak/promptfoo) are driven against model
+            # endpoints by ModelToolAgent, not here against the web surface.
+            if spec.category == ToolCategory.AI_REDTEAM:
+                continue
             if not sel.runnable or (allow and spec.name not in allow):
                 continue
 

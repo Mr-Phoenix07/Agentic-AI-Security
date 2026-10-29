@@ -24,7 +24,7 @@ flowchart TB
       GRAPH[Graph / LangGraph-optional]
       STATE[(AssessmentState blackboard)]
     end
-    subgraph Agents[22-agent collective + orchestrator]
+    subgraph Agents[25-agent collective + orchestrator]
       A1[Planning] --- A2[Mapping/Recon]
       A2 --- A3[Interaction/Evaluation]
       A3 --- A4[Analysis/Adjudication]
@@ -103,11 +103,15 @@ sequenceDiagram
     R->>BB: report_paths (md/html/json/dashboard)
 ```
 
-### The 22 agents (+ orchestrator)
+### The 25 agents (+ orchestrator)
 
-The collective is 22 specialized `BaseAgent` subclasses (the numbered rows below,
+The collective is 25 specialized `BaseAgent` subclasses (the numbered rows below,
 which match `aegis agents` and `WORKFLOW_ORDER`), coordinated by the Orchestrator
-(row 0), which drives the phases but is not itself one of the collective.
+(row 0), which drives the phases but is not itself one of the collective. Rows 11,
+12 and 17 are **offensive** agents that stay gated off (via `should_run`) unless
+the engagement opts in: `redteam.enabled` (adversarial red-team), the AI toolchain
+(`external_tools` + garak/promptfoo in `scan.tools`), and `scan.active_exploit`
+(web exploit), respectively.
 
 | # | Agent | Phase | Responsibility |
 |---|-------|-------|----------------|
@@ -122,18 +126,21 @@ which match `aegis agents` and `WORKFLOW_ORDER`), coordinated by the Orchestrato
 | 8 | Prompt Optimization | evaluate | Prioritize transforms via historical priors (bandit) |
 | 9 | Conversation | evaluate | Multi-turn context-management probe |
 | 10 | Adaptive Evaluation | evaluate | Closed-loop evaluator; persist probes/observations |
-| 11 | Long-Context | evaluate | Systematic recall-vs-distance sweep |
-| 12 | RAG Analysis | evaluate | Grounding, citation, retrieval quality |
-| 13 | Information Verification | analyze | Corroborate/aggregate; flag thin data |
-| 14 | API Security | analyze | OWASP API Top 10 / excessive-agency surface checks |
-| 15 | Vulnerability Assessment | analyze | Observations → candidate findings (thresholds) |
-| 16 | Controlled Validation | analyze | Safe, authorized confirmatory re-test |
-| 17 | Evidence Collection | analyze | Reproduction-grade evidence per finding |
-| 18 | Risk Analysis | analyze | Finalize severity; cross-domain correlation |
-| 19 | Explainability | remediate | Behavioral + white-box-optional explanations |
-| 20 | Mitigation Recommendation | remediate | Frameworks + mitigations + regression tests |
-| 21 | Reporting | report | Assemble + render MD/HTML/JSON; persist |
-| 22 | Dashboard | report | Machine-readable coverage/metric time-series |
+| 11 | Adversarial Red-Team ⚔️ | evaluate | **Gated.** Benign-canary prompt-injection / system-prompt-leak / RAG-injection susceptibility (OWASP LLM01/LLM07) |
+| 12 | AI Toolchain ⚔️ | evaluate | **Gated.** Drive garak / promptfoo against an authorized model endpoint through the audited executor |
+| 13 | Long-Context | evaluate | Systematic recall-vs-distance sweep |
+| 14 | RAG Analysis | evaluate | Grounding, citation, retrieval quality |
+| 15 | Information Verification | analyze | Corroborate/aggregate; flag thin data |
+| 16 | API Security | analyze | OWASP API Top 10 / excessive-agency surface checks |
+| 17 | Web Exploit ⚔️ | analyze | **Gated.** Active, scope-gated confirmation of reflected XSS / path traversal / open redirect / SSRF |
+| 18 | Vulnerability Assessment | analyze | Observations → candidate findings (thresholds) |
+| 19 | Controlled Validation | analyze | Safe, authorized confirmatory re-test |
+| 20 | Evidence Collection | analyze | Reproduction-grade evidence per finding |
+| 21 | Risk Analysis | analyze | Finalize severity; cross-domain correlation |
+| 22 | Explainability | remediate | Behavioral + white-box-optional explanations |
+| 23 | Mitigation Recommendation | remediate | Frameworks + mitigations + regression tests |
+| 24 | Reporting | report | Assemble + render MD/HTML/JSON; persist |
+| 25 | Dashboard | report | Machine-readable coverage/metric time-series |
 
 Each agent extends `BaseAgent`, whose lifecycle wraps `_run` with tracing,
 logging, bus events, confidence estimation, and a `should_run` **stopping/gating

@@ -7,7 +7,7 @@ is backed by runnable code, not just prose.
 | # | Deliverable | Implementation | Documentation |
 |---|-------------|----------------|---------------|
 | 1 | **System architecture** | package layout under `aegis/` (layered, registries) | [ARCHITECTURE §1](ARCHITECTURE.md#1-system-architecture) |
-| 2 | **Multi-agent interaction diagram** | `aegis/agents/` (23 agents), `aegis/core/events.py` (bus) | [ARCHITECTURE §2](ARCHITECTURE.md#2-multi-agent-interaction) |
+| 2 | **Multi-agent interaction diagram** | `aegis/agents/` (25 agents), `aegis/core/events.py` (bus) | [ARCHITECTURE §2](ARCHITECTURE.md#2-multi-agent-interaction) |
 | 3 | **LangGraph workflow** | `aegis/graph/workflow.py` (`to_langgraph`, built-in runner) | [WORKFLOW](WORKFLOW.md) |
 | 4 | **MCP integration design** | `aegis/targets/surface.py` (`MCPTarget`), `agents/analysis.py` | [MCP_INTEGRATION](MCP_INTEGRATION.md) |
 | 5 | **State machine** | `aegis/graph/workflow.py` (`Phase`, `AGENT_PHASE`) | [ARCHITECTURE §3](ARCHITECTURE.md#3-state-machine) |
@@ -26,7 +26,7 @@ is backed by runnable code, not just prose.
 
 ## Specification coverage
 
-**Multi-agent architecture** — all 23 named agents implemented with declared
+**Multi-agent architecture** — all 25 named agents implemented with declared
 responsibilities/inputs/outputs/memory/communication/confidence/stopping
 (`aegis/agents/`, `BaseAgent`).
 

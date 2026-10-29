@@ -35,6 +35,8 @@ from .spec import (
 _WEB = (TargetKind.WEB_APP, TargetKind.REST_API, TargetKind.GRAPHQL_API,
         TargetKind.AI_GATEWAY, TargetKind.HYBRID)
 _NET = (TargetKind.WEB_APP, TargetKind.REST_API, TargetKind.HYBRID)
+_AI = (TargetKind.LOCAL_LLM, TargetKind.API_LLM, TargetKind.RAG,
+       TargetKind.MULTI_AGENT, TargetKind.COPILOT, TargetKind.AI_GATEWAY)
 
 
 # --------------------------------------------------------------------------- #
@@ -293,6 +295,53 @@ def _build_trivy(inv: ToolInvocation) -> list[str]:
     return ["trivy", mode, "--quiet", "--format", "json", inv.target]
 
 
+# --- AI/LLM red-team + model-supply-chain adapters ------------------------- #
+_SAFE_SPEC = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._,- ")
+
+
+def _validate_spec(value: str, what: str) -> str:
+    if not set(value) <= _SAFE_SPEC:
+        raise ValueError(f"invalid {what} (allowed: alnum . _ , - space)")
+    return value
+
+
+def _build_garak(inv: ToolInvocation) -> list[str]:
+    # garak LLM vulnerability scanner. The scope-checked target is the endpoint;
+    # the model name/type identify what garak talks to. JSONL report to stdout.
+    model_type = _validate_spec(str(inv.opt("model_type", "rest")), "model_type")
+    model_name = _validate_spec(str(inv.opt("model_name", "")), "model_name")
+    argv = ["garak", "--model_type", model_type]
+    if model_name:
+        argv += ["--model_name", model_name]
+    probes = inv.opt("probes")
+    if probes:
+        argv += ["--probes", _validate_spec(str(probes), "probes").replace(" ", ",")]
+    gens = inv.opt("generations")
+    if gens is not None:
+        argv += ["--generations", str(int(gens))]
+    argv += ["--report_prefix", "aegis_garak"]
+    return argv
+
+
+def _build_promptfoo(inv: ToolInvocation) -> list[str]:
+    # promptfoo LLM red-team/eval (node CLI). Results JSON to stdout.
+    action = str(inv.opt("action", "redteam"))
+    argv = (["promptfoo", "redteam", "run"] if action == "redteam"
+            else ["promptfoo", "eval"])
+    config = inv.opt("config")
+    if config:
+        argv += ["-c", _require_str(inv, "config")]
+    argv += ["--no-progress-bar", "-o", "/dev/stdout"]
+    return argv
+
+
+def _build_modelscan(inv: ToolInvocation) -> list[str]:
+    # scan a model artifact for unsafe code / deserialization payloads. Local,
+    # no network. JSON report to stdout.
+    path = _require_str(inv, "path")
+    return ["modelscan", "-p", path, "-r", "json", "-o", "/dev/stdout"]
+
+
 # --------------------------------------------------------------------------- #
 # parsers (raw output -> observations). Defensive: never raise on junk.
 # --------------------------------------------------------------------------- #
@@ -537,6 +586,91 @@ def _parse_sqli(result: ToolResult) -> list[ParsedObservation]:
     return []
 
 
+def _parse_garak(result: ToolResult) -> list[ParsedObservation]:
+    """Parse garak output. Prefers JSONL eval records (one per probe/detector
+    with a pass-rate); falls back to the human 'probe: ... PASS/FAIL' lines."""
+    obs: list[ParsedObservation] = []
+    for i, line in enumerate(result.stdout.splitlines()):
+        s = line.strip()
+        if not s:
+            continue
+        try:
+            o = json.loads(s)
+        except Exception:
+            low = s.lower()
+            if "fail" in low and ("probe" in low or "." in s):
+                obs.append(ParsedObservation(kind="llm_vuln", value=s[:160],
+                                             severity_hint="high", raw_ref=f"line:{i}"))
+            continue
+        if not isinstance(o, dict):
+            continue
+        # garak report rows carry a probe/detector and a passed/total count.
+        probe = o.get("probe") or o.get("probe_classname") or o.get("detector")
+        total = o.get("total") or o.get("attempts")
+        passed = o.get("passed")
+        if probe and total:
+            failed = (int(total) - int(passed)) if passed is not None else None
+            if failed:
+                obs.append(ParsedObservation(
+                    kind="llm_vuln", value=str(probe),
+                    detail={"failed": failed, "total": total},
+                    severity_hint="high", raw_ref=f"line:{i}"))
+    return obs
+
+
+def _parse_promptfoo(result: ToolResult) -> list[ParsedObservation]:
+    """Parse promptfoo JSON (best-effort): surface failed/flagged test cases."""
+    raw = result.stdout or ""
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return []
+    try:
+        data = json.loads(raw[start:end + 1])
+    except Exception:
+        return []
+    results = (data.get("results") if isinstance(data, dict) else None) or {}
+    rows = results.get("results") if isinstance(results, dict) else None
+    obs: list[ParsedObservation] = []
+    for j, r in enumerate(rows or []):
+        if isinstance(r, dict) and r.get("success") is False:
+            obs.append(ParsedObservation(
+                kind="llm_vuln",
+                value=str((r.get("vars") or {}).get("name") or r.get("description")
+                          or "promptfoo failure")[:160],
+                detail={"error": str(r.get("error", ""))[:200]},
+                severity_hint="high", raw_ref=f"result:{j}"))
+    return obs
+
+
+_MODELSCAN_SEV = {"CRITICAL": "critical", "HIGH": "high", "MEDIUM": "medium",
+                  "LOW": "low"}
+
+
+def _parse_modelscan(result: ToolResult) -> list[ParsedObservation]:
+    """Parse modelscan JSON: each issue is an unsafe-operator/deserialization risk."""
+    raw = result.stdout or ""
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return []
+    try:
+        data = json.loads(raw[start:end + 1])
+    except Exception:
+        return []
+    issues = (data.get("issues") if isinstance(data, dict) else None) or []
+    obs: list[ParsedObservation] = []
+    for j, it in enumerate(issues):
+        if not isinstance(it, dict):
+            continue
+        sev = _MODELSCAN_SEV.get(str(it.get("severity", "")).upper(), "medium")
+        desc = it.get("description") or it.get("operator") or "unsafe model operator"
+        obs.append(ParsedObservation(
+            kind="model_issue", value=str(desc)[:160],
+            detail={k: it.get(k) for k in ("severity", "operator", "module",
+                                           "source") if k in it},
+            severity_hint=sev, raw_ref=f"issue:{j}"))
+    return obs
+
+
 # --------------------------------------------------------------------------- #
 # The catalog
 # --------------------------------------------------------------------------- #
@@ -712,9 +846,61 @@ def default_catalog() -> list[ToolSpec]:
             references=("https://aquasecurity.github.io/trivy/",),
         ),
 
+        # -- AI / LLM red-team (active) ------------------------------------- #
+        ToolSpec(
+            name="garak", binary="garak", category=ToolCategory.AI_REDTEAM,
+            purpose="LLM vulnerability scanner (jailbreak, prompt-injection, "
+                    "toxicity, leakage probes) against an authorized model endpoint.",
+            risk_level=RiskLevel.ACTIVE, supported_targets=_AI,
+            applies_when=("llm", "ai", "model", "http", "https"),
+            evidence_format="jsonl", default_timeout_s=1800,
+            input_schema={"target": "authorized model endpoint (scope-checked)",
+                          "model_type": "garak model type (default rest)",
+                          "model_name": "model id", "probes": "probe set (optional)"},
+            command_builder=_build_garak, parser=_parse_garak,
+            references=("https://github.com/NVIDIA/garak",),
+        ),
+        ToolSpec(
+            name="promptfoo", binary="promptfoo", category=ToolCategory.AI_REDTEAM,
+            purpose="LLM red-team / eval harness (requires a promptfoo config "
+                    "describing the authorized provider).",
+            risk_level=RiskLevel.ACTIVE, supported_targets=_AI,
+            applies_when=("llm", "ai", "model", "http", "https"),
+            evidence_format="json", default_timeout_s=1800,
+            input_schema={"target": "authorized model endpoint (scope-checked)",
+                          "action": "redteam|eval", "config": "promptfoo config path"},
+            command_builder=_build_promptfoo, parser=_parse_promptfoo,
+            notes="Node CLI: install with 'npm install -g promptfoo'.",
+            references=("https://www.promptfoo.dev/docs/red-team/",),
+        ),
+        # -- model supply-chain (static, local, no network) ----------------- #
+        ToolSpec(
+            name="modelscan", binary="modelscan",
+            category=ToolCategory.STATIC_ANALYSIS,
+            purpose="Scan a model artifact (pickle/h5/SavedModel/…) for unsafe "
+                    "code / deserialization payloads before loading it.",
+            risk_level=RiskLevel.SAFE, supported_targets=_AI,
+            applies_when=("model", "artifact", "weights", "pickle"),
+            requires_network=False, evidence_format="json",
+            input_schema={"path": "local path to the model file/dir"},
+            command_builder=_build_modelscan, parser=_parse_modelscan,
+            references=("https://github.com/protectai/modelscan",),
+        ),
+
         # ================================================================== #
         # Documentation-only contracts (no command_builder => never auto-run)
         # ================================================================== #
+        ToolSpec(
+            name="netron", binary="netron", category=ToolCategory.STATIC_ANALYSIS,
+            purpose="Model architecture viewer (graph of layers/ops). A manual "
+                    "GUI/web viewer, not an automated scanner.",
+            risk_level=RiskLevel.SAFE, supported_targets=_AI,
+            applies_when=("model", "artifact", "weights"), requires_network=False,
+            command_builder=None,
+            notes="Viewer only: open a model with 'netron <file>'. Pair with "
+                  "modelscan for the automated supply-chain check.",
+            references=("https://github.com/lutzroeder/netron",),
+        ),
         # ---- gated exploitation adapters ---------------------------------- #
         # These now ship a command_builder (the "human-implemented scoped adapter"
         # the design calls for), but remain DANGEROUS: the executor refuses them

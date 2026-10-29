@@ -10,11 +10,13 @@ from aegis.graph import Phase, run_assessment
 from aegis.providers import ProviderRequest, build_provider
 
 
-def test_registry_has_23_named_agents():
-    # 22 specialized agents (+ Orchestrator runner) per the specification.
-    assert len(WORKFLOW_ORDER) == 22
+def test_registry_agent_count():
+    # 25 specialized agents (+ Orchestrator runner): 22 core + 3 offensive
+    # (web_exploit, adversarial_redteam, ai_toolchain), all gated off by default.
+    assert len(WORKFLOW_ORDER) == 25
     assert "adaptive_evaluation" in REGISTRY
     assert "risk_analysis" in REGISTRY
+    assert {"web_exploit", "adversarial_redteam", "ai_toolchain"} <= set(REGISTRY)
     assert all(cls.responsibilities for cls in WORKFLOW_ORDER)
 
 

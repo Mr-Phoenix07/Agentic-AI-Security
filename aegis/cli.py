@@ -1,12 +1,16 @@
 """AEGIS command-line interface.
 
 Subcommands:
-    run          run an assessment from a config file
-    demo         run a self-contained offline demo (mock target, no keys/network)
-    mutate       show reproducible prompt variants for a piece of text
-    scope-check  test whether a URL/model is inside a config's authorization scope
-    agents       list the agent collective and the workflow order
-    version      print version
+    run           run an assessment from a config file
+    demo          run a self-contained offline demo (mock target, no keys/network)
+    mutate        show reproducible prompt variants for a piece of text
+    scope-check   test whether a URL/model is inside a config's authorization scope
+    agents        list the agent collective and the workflow order
+    benchmark     measure detection accuracy on offline ground-truth fixtures
+    methodology   show the web-app / Active Directory / AI red-team methodologies
+    tools         inventory the tool registry / preview intelligent selection
+    integrations  list optional AI/ML library integrations and their availability
+    version       print version
 
 Pure stdlib (argparse); no third-party dependency required to run.
 """
@@ -198,6 +202,25 @@ def cmd_benchmark(args) -> int:
     return 0
 
 
+def cmd_integrations(args) -> int:
+    from . import integrations as I
+
+    if args.json:
+        _print(json.dumps([I.describe(n) for n in I.LIBRARIES], indent=2))
+        return 0
+    _print("AEGIS optional AI/ML library integrations (runtime-detected):\n")
+    _print(f"  {'name':12s} {'domain':16s} {'installed':10s} purpose")
+    for name, spec in I.LIBRARIES.items():
+        _print(f"  {name:12s} {spec.domain:16s} "
+               f"{('yes' if spec.available() else 'no — pip install ' + spec.pip_package):10s}")
+        _print(f"  {'':12s} {'':16s} {'':10s} {spec.purpose}")
+        _print(f"  {'':12s} needs: {', '.join(spec.required_inputs) or '—'}")
+        _print("")
+    _print("These run in-process on a model/dataset you supply (not auto-run).")
+    _print("CLI tools (garak, promptfoo, modelscan, netron) are in: aegis tools list")
+    return 0
+
+
 def cmd_agents(args) -> int:
     from .agents import WORKFLOW_ORDER
     from .graph.workflow import AGENT_PHASE
@@ -308,6 +331,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     a = sub.add_parser("agents", help="list the agent collective and workflow order")
     a.set_defaults(func=cmd_agents)
+
+    ig = sub.add_parser("integrations",
+                        help="list optional AI/ML library integrations and whether "
+                             "each is installed (giskard/ragas/ART/cleverhans/deepteam)")
+    ig.add_argument("--json", action="store_true")
+    ig.set_defaults(func=cmd_integrations)
 
     b = sub.add_parser("benchmark",
                        help="measure detection accuracy (precision/recall/F1) on "
