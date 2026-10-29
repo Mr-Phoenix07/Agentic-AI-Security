@@ -33,12 +33,17 @@ class LibrarySpec:
     purpose: str
     required_inputs: tuple[str, ...] = ()
     references: tuple[str, ...] = ()
+    # Module probed for availability. Defaults to import_name; set a distinctive
+    # submodule where the top-level name collides with an unrelated PyPI package
+    # (e.g. ART's "art" vs. the ASCII-art package) to avoid a false positive.
+    probe_name: str | None = None
 
     def available(self) -> bool:
-        """True if the library can be imported in this environment (no import)."""
+        """True if the library can be imported in this environment (no import of
+        the library itself — only a spec lookup)."""
         try:
-            return importlib.util.find_spec(self.import_name) is not None
-        except (ImportError, ValueError):
+            return importlib.util.find_spec(self.probe_name or self.import_name) is not None
+        except (ImportError, ValueError, ModuleNotFoundError):
             return False
 
     def to_dict(self) -> dict:
@@ -69,6 +74,9 @@ LIBRARIES: dict[str, LibrarySpec] = {
         "Adversarial Robustness Toolbox: craft evasion/poisoning attacks and "
         "measure a classifier's robustness.",
         required_inputs=("estimator", "x", "y"),
+        # probe a distinctive submodule: top-level "art" collides with the
+        # unrelated ASCII-art PyPI package.
+        probe_name="art.attacks",
         references=("https://adversarial-robustness-toolbox.readthedocs.io/",)),
     "cleverhans": LibrarySpec(
         "cleverhans", "cleverhans", "cleverhans", "adversarial_ml",

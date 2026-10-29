@@ -110,3 +110,24 @@ def test_describe_matches_spec():
     d = I.describe("ragas")
     assert d["domain"] == "rag" and d["pip_package"] == "ragas"
     assert isinstance(d["available"], bool)
+
+
+def test_art_availability_probes_submodule(monkeypatch):
+    # ART's top-level name "art" collides with the unrelated ASCII-art package,
+    # so availability must probe a distinctive submodule and not be fooled by a
+    # bare top-level "art" being importable.
+    import importlib.util as u
+
+    spec = I.LIBRARIES["art"]
+    assert spec.probe_name == "art.attacks"
+    seen = []
+
+    def fake_find_spec(name):
+        seen.append(name)
+        if name == "art":
+            return object()                    # unrelated ascii-art pkg present
+        raise ModuleNotFoundError(name)
+
+    monkeypatch.setattr(u, "find_spec", fake_find_spec)
+    assert spec.available() is False           # not fooled by top-level "art"
+    assert seen == ["art.attacks"]             # probed the submodule, not "art"
