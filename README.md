@@ -62,6 +62,7 @@ aegis demo                          # or:  python examples/run_demo.py
 # 2. Inspect the collective, tools, and methodologies
 aegis agents
 aegis tools list
+aegis integrations           # optional AI/ML libraries + whether each is installed
 aegis methodology webapp
 
 # 3. Offline accuracy benchmark (precision / recall / F1 on ground-truth fixtures)
@@ -74,7 +75,7 @@ aegis run examples/engagement-zap-dast.yaml --fail-on high
 Run the tests (fully offline):
 
 ```bash
-pytest -q            # 93 tests
+pytest -q            # 122 tests
 ```
 
 ---

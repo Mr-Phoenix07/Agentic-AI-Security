@@ -1,6 +1,6 @@
 """Orchestrator & workflow graph.
 
-The Orchestrator drives the twenty-three-agent collective over a single shared
+The Orchestrator drives the twenty-five-agent collective over a single shared
 :class:`~aegis.graph.state.AssessmentState`. The reference implementation is a
 deterministic, dependency-free sequential state machine (phases: PLAN → MAP →
 EVALUATE → ANALYZE → REMEDIATE → REPORT → DONE). When ``langgraph`` is installed,

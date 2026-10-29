@@ -2,7 +2,7 @@
 
 AEGIS ships a **deterministic, dependency-free workflow runner** as the reference
 implementation, and an **optional LangGraph adapter** for teams standardizing on
-that runtime. Both execute the same 23-agent collective in the same
+that runtime. Both execute the same 25-agent collective in the same
 dependency-respecting order; AEGIS's adaptivity lives *inside* the Adaptive
 Evaluation node, so a linear top-level graph is faithful.
 

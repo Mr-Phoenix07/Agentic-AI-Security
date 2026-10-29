@@ -23,7 +23,7 @@ authorization-gated posture:
   exploit engine with live offensive tooling.
 
 The result maps directly onto AEGIS's existing
-[`FindingCategory`](../aegis/core/types.py) values and its 23-agent collective, so
+[`FindingCategory`](../aegis/core/types.py) values and its 25-agent collective, so
 this methodology is the human-readable companion to what the adaptive evaluation
 loop already runs against the offline mock target and authorized providers.
 

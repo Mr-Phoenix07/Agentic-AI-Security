@@ -41,7 +41,7 @@ AI_REDTEAM = Methodology(
         "attack-surface mapping, adversarial execution (prompt injection, "
         "jailbreak, tool/agent abuse, RAG poisoning, multimodal), evidence-based "
         "scoring, and remediation. It is the human-readable companion to AEGIS's "
-        "adaptive evaluation loop and 23-agent collective."
+        "adaptive evaluation loop and 25-agent collective."
     ),
     authorization_note=(
         "Assess only AI systems you own or are explicitly authorized to evaluate. "

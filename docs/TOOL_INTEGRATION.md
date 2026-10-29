@@ -5,7 +5,8 @@
 > sandbox / controlled execution** (§21), **AI safety controls** (§34).
 
 AEGIS's agents orchestrate *external* security tooling — Nmap, Nuclei, httpx,
-ffuf, Semgrep, Trivy, and so on. The danger with "AI + Kali tools" glue is that
+ffuf, Semgrep, Trivy, and the AI/ML security tools garak, promptfoo and
+modelscan, and so on. The danger with "AI + Kali tools" glue is that
 a language model ends up choosing and running commands directly. AEGIS is built
 the other way around: **every external tool passes through one controlled,
 auditable choke point**, and the model never authors a command line.
@@ -19,6 +20,23 @@ aegis/tools/
 ├── registry.py    # the registry + intelligent, explainable test selection
 └── execution.py   # the single controlled execution choke point
 ```
+
+### AI / ML tooling
+
+The catalog also ships AI-security CLI adapters that run through the same choke
+point: **garak** and **promptfoo** (`ai_redteam`, active — driven against
+authorized model endpoints by the `ai_toolchain` agent) and **modelscan**
+(`static_analysis`, safe/local — model-artifact supply-chain scan); **netron** is
+a documentation-only viewer. Python libraries that must run *in-process* on a
+model/dataset — **giskard, RAGAS, ART, CleverHans, DeepTeam** — are not catalog
+tools; they live in [`aegis/integrations/`](../aegis/integrations/), are
+runtime-detected (graceful fallback when absent), and are invoked explicitly with
+a handle the operator supplies (`aegis integrations` lists availability).
+
+AI tools often need the model's base URL/key, which the curated child environment
+strips. The executor forwards only the env-var names an engagement lists in
+`scan.tool_env` (e.g. `OPENAI_API_BASE`, `OPENAI_API_KEY`); every other secret
+stays dropped.
 
 ## The adapter contract (`ToolSpec`)
 
